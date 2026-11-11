@@ -1,0 +1,14 @@
+#!/bin/sh
+# 用第一个真能运行的解释器。Windows 上先试 python：python3 常是 WindowsApps 里的商店别名，
+# 找得到却跑不起来；其他系统先试 python3。
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*) candidates="python python3" ;;
+  *) candidates="python3 python" ;;
+esac
+PY=
+for candidate in $candidates; do
+  if "$candidate" -c "" >/dev/null 2>&1; then PY=$candidate; break; fi
+done
+[ -n "$PY" ] || { echo "找不到能运行的 python（试过 $candidates）：装好 Python 并加进 PATH。"; exit 1; }
+"$PY" scripts/doc_guard.py || { echo "doc_guard 未通过：文档里出现了记账内容、历史目录或断链。"; exit 1; }
+"$PY" scripts/spec_check.py || { echo "spec_check 未通过：能力规格的代号或编号有误，或者代码、测试引用了不存在的编号。"; exit 1; }
