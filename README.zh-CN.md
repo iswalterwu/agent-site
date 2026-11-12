@@ -6,7 +6,7 @@
 
 [English](README.md) · [快速开始](#快速开始) · [支持范围](#支持范围) · [文档](docs/README.md) · [MIT](LICENSE)
 
-![Agent-site 演示：计划进度变成楼层，agent 提问，你在桌面卡片里回答。](assets/demo.gif)
+![Agent-site 演示：计划进度变成楼层，agent 提问，你在桌面卡片里回答。](assets/demo.zh-CN.gif)
 
 *真实 App 渲染器，虚构项目和会话。桥接交互为模拟数据，没有调用真实 agent，也没有录制私人会话。*
 
