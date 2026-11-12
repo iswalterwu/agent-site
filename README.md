@@ -22,7 +22,15 @@ This isn't an agent launcher or scheduler. Keep using your terminal. Agent-site 
 
 ## Quick start
 
-Currently developed and tested primarily on **Windows 11**, with **English and Simplified Chinese** interfaces. There is no packaged installer yet.
+Developed and tested for **Windows 11 x64**, with **English and Simplified Chinese** interfaces.
+
+### Portable desktop
+
+Download a portable ZIP from [Releases](https://github.com/iswalterwu/agent-site/releases), extract the **whole folder**, and run `AgentSite.exe`. No separate Node.js, npm or Electron installation is needed. See the [installation, checksum, unsigned-build and rollback guide](docs/distribution.md). If no packaged release is listed, use the source route below.
+
+The optional `dsh-agent-site` plugin opens this independent window from local DSH. Install its prebuilt `.tgz` into the DSH instance/profile you use, then save the extracted executable's path. The desktop component is downloaded separately; DSH monitoring stays read-only. [DSH plugin details](packages/dsh-plugin/README.md).
+
+### Run from source
 
 Requires **Node.js ≥ 22.19** and **Git ≥ 2.31**. Clone the repository, then run:
 

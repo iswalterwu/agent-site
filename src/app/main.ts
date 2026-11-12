@@ -1,7 +1,9 @@
-import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, Notification, screen, Tray, type Display, type NativeImage, type Rectangle } from "electron";
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, Notification, screen, Tray, type Display, type NativeImage, type Rectangle } from "electron";
 import os from "node:os";
 import path from "node:path";
 import { appDataDir, loadSettings, writeSettings, type Settings } from "../main/settings";
+import { readInstanceLaunch, resolveDshLaunch, rootProblemText, sameDshRoot, sessionRoots, type DshLaunch } from "../main/roots";
+import { LAUNCH_PROTOCOL } from "../protocol/launch";
 import { LOGICAL_WIDTH } from "./constants";
 import type { AppAsk, AppBootstrap, AppHit, AppRect, AppView, AskResult, ControlAction, ControlResult, MenuAction, SaveSettingsResult } from "./api";
 import { draftOf, fromDraft, mergeSettings, parseDraft, engineSettingsChanged, type SettingsDraft } from "./settings-form";
@@ -62,12 +64,26 @@ let pausedSessions = new Set<string>();
 const iconPath = path.join(__dirname, "icon.png");
 const waitingIconPath = path.join(__dirname, "icon-waiting.png");
 
+let currentDshHome: string;
 app.setAppUserModelId("agent-site");
-const gotLock = app.requestSingleInstanceLock();
-if (!gotLock) {
-  app.quit();
-} else {
-  app.on("second-instance", () => { showWindow(); });
+const launchSelection = resolveDshLaunch(process.argv, process.env, os.homedir());
+if (!launchSelection.ok) {
+  const locale = resolveLocale("system", Intl.DateTimeFormat().resolvedOptions().locale);
+  console.error(`[agent-site] ${rootProblemText(launchSelection.problem, locale)}`);
+  app.exit(2);
+} else boot(launchSelection.launch);
+
+function boot(launch: DshLaunch): void {
+  currentDshHome = launch.dshHome;
+  if (!app.requestSingleInstanceLock({ launchProtocol: LAUNCH_PROTOCOL, ...launch })) { app.quit(); return; }
+  app.on("second-instance", (_event, _argv, _directory, data) => {
+    const requested = readInstanceLaunch(data);
+    if (requested !== null && requested.explicit && !sameDshRoot(currentDshHome, requested.dshHome)) {
+      void showRootConflict();
+      return;
+    }
+    showWindow();
+  });
   app.on("window-all-closed", () => { app.quit(); });
   app.on("will-quit", () => {
     globalShortcut.unregisterAll();
@@ -86,20 +102,26 @@ if (!gotLock) {
   });
 }
 
+async function showRootConflict(): Promise<void> {
+  await app.whenReady();
+  showWindow();
+  const options = { type: "warning" as const, title: "agent-site", message: ui("工地正在读取另一个 DSH 数据目录"),
+    detail: ui("当前窗口和草稿已保留。请先退出工地，再从目标 DSH 打开。"), buttons: [ui("知道了")], noLink: true };
+  try {
+    if (win === null) await dialog.showMessageBox(options);
+    else await dialog.showMessageBox(win, options);
+  } catch { /* 原窗口和读取根不变；系统对话框不可用不阻止 App */ }
+}
+
 async function startApp(): Promise<void> {
   const { settings, diagnostics } = loadSettings(appDataDir(process.env), app.getLocale());
   currentSettings = settings;
   setUiLocale(resolveLocale(settings.language, app.getLocale()));
   theme = settings.theme;
   for (const message of diagnostics) console.warn(`[agent-site] ${message}`);
-  const home = os.homedir();
   const engine = new SiteEngine({
     settings: { ...settings, locale: uiLocale() }, diagnostics,
-    roots: {
-      pi: path.join(home, ".pi", "agent", "sessions"),
-      claude: path.join(home, ".claude", "projects"),
-      dsh: path.join(home, ".dsh", "sessions"),
-    },
+    roots: sessionRoots(os.homedir(), currentDshHome),
   });
   const bridge = new BridgeService({
     file: path.join(appDataDir(process.env), "bridge.json"),
@@ -125,7 +147,7 @@ async function startApp(): Promise<void> {
   registerShortcuts();
   // 开机自启：settings.json 说开就注册，说关就撤掉。失败（或者被策略静默拦掉）只提示一句，不影响 App 启动
   const wanted = loginItem(settings.autostart, {
-    packaged: app.isPackaged, execPath: process.execPath, mainFile: path.join(__dirname, "main.cjs"),
+    packaged: app.isPackaged, execPath: process.execPath, mainFile: path.join(__dirname, "main.cjs"), dshHome: currentDshHome,
   });
   const loginStatus = applyAutostart({
     desired: settings.autostart, settings: wanted,
@@ -580,7 +602,7 @@ function applySavedSettings(next: Settings, previous: Settings): void {
   }
   if (theme !== next.theme) setThemeMode(next.theme);
   const item = loginItem(next.autostart, {
-    packaged: app.isPackaged, execPath: process.execPath, mainFile: path.join(__dirname, "main.cjs"),
+    packaged: app.isPackaged, execPath: process.execPath, mainFile: path.join(__dirname, "main.cjs"), dshHome: currentDshHome,
   });
   const loginStatus = applyAutostart({
     desired: next.autostart, settings: item,
@@ -600,11 +622,7 @@ async function restartEngine(next: Settings): Promise<void> {
   activeEngine = null;
   const engine = new SiteEngine({
     settings: { ...next, locale: uiLocale() }, diagnostics: [],
-    roots: {
-      pi: path.join(os.homedir(), ".pi", "agent", "sessions"),
-      claude: path.join(os.homedir(), ".claude", "projects"),
-      dsh: path.join(os.homedir(), ".dsh", "sessions"),
-    },
+    roots: sessionRoots(os.homedir(), currentDshHome),
   });
   activeEngine = engine;
   stopSnapshots = engine.onSnapshot(snapshot => publishSnapshot(snapshot));

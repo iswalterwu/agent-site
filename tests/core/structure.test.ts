@@ -26,6 +26,14 @@ describe("结构守护", () => {
       expect({ file: path.relative(root, file), outer }).toEqual({ file: path.relative(root, file), outer: [] });
     }
   });
+  it("DIST-3：DSH适配器不反向导入App或引擎，主程序不导入DSH运行时", () => {
+    for (const file of sources("packages/dsh-plugin/src")) {
+      expect(imports(file).filter(specifier => /src\/(?:app|main)\//.test(specifier))).toEqual([]);
+    }
+    for (const dir of ["src/app", "src/main", "src/core", "src/protocol"]) {
+      for (const file of sources(dir)) expect(imports(file).filter(specifier => specifier.startsWith("@deepseek-ai/"))).toEqual([]);
+    }
+  });
   it("工地模块只依赖 core 和 node 内置：它同时被引擎和 App 用", () => {
     const specs = imports(path.join(root, "src/core/site.ts"));
     expect(specs.every((specifier) => specifier.startsWith("./"))).toBe(true);

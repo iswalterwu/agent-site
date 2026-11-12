@@ -1,3 +1,5 @@
+import { launchArgs } from "../protocol/launch";
+
 /** `app.setLoginItemSettings` 的参数；单独成函数，好在没有 Electron 的环境里测 */
 export interface LoginItemSettings { openAtLogin: boolean; path?: string; args?: string[] }
 
@@ -6,9 +8,16 @@ export interface LoginItemSettings { openAtLogin: boolean; path?: string; args?:
  * 开发时跑的是 `electron dist/app/main.cjs`，得把 electron 和入口文件一起写进去，否则登录时只起来一个空的 Electron。
  * 撤销也是同一套参数：Windows 按 AppUserModelId 找值名，重复调用不会越写越多。
  */
-export function loginItem(on: boolean, opts: { packaged: boolean; execPath: string; mainFile: string }): LoginItemSettings {
-  if (opts.packaged) return { openAtLogin: on };
-  return { openAtLogin: on, path: opts.execPath, args: [opts.mainFile] };
+export function loginItem(on: boolean, opts: { packaged: boolean; execPath: string; mainFile: string; dshHome?: string }): LoginItemSettings {
+  const args = opts.dshHome === undefined ? [] : launchArgs(opts.dshHome).map(loginArgument);
+  if (opts.packaged) return { openAtLogin: on, ...(args.length === 0 ? {} : { args }) };
+  return { openAtLogin: on, path: opts.execPath, args: [loginArgument(opts.mainFile), ...args] };
+}
+
+/** Windows 登录项拼接参数片段，不提供 spawn 的逐项 argv 引用；闭引号前的反斜线要加倍。 */
+function loginArgument(value: string): string {
+  if (!/[\s"]/.test(value)) return value;
+  return `"${value.replace(/(\\*)"/g, '$1$1\\"').replace(/\\+$/, "$&$&")}"`;
 }
 
 /**

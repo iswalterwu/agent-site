@@ -22,7 +22,15 @@
 
 ## 快速开始
 
-目前主要在 **Windows 11** 上开发和验证，支持**简体中文和英文界面**，暂无安装包。
+针对 **Windows 11 x64** 开发和验证，支持**简体中文和英文界面**。
+
+### 便携桌面版
+
+从 [Releases](https://github.com/iswalterwu/agent-site/releases) 下载便携 ZIP，**完整解压**后运行 `AgentSite.exe`，不必另装 Node.js、npm 或 Electron。[安装、校验、未签名提示与回滚说明](docs/distribution.zh-CN.md)。如果 Release 中暂未列出安装文件，可以使用下面的源码方式。
+
+可选的 `dsh-agent-site` 插件能从本机 DSH 打开这个独立小窗。将预构建 `.tgz` 装到实际使用的 DSH 实例/profile，保存已解压程序的路径即可。桌面组件需单独下载，DSH 仍是只读监控。[DSH 插件说明](packages/dsh-plugin/README.zh-CN.md)。
+
+### 从源码启动
 
 需要 **Node.js ≥ 22.19**、**Git ≥ 2.31**。克隆仓库后运行：
 

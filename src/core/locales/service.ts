@@ -1,4 +1,11 @@
 export const MAIN_MESSAGES = {
+  "启动参数缺少有效值": "A launch option is missing a value",
+  "启动参数不能重复": "Launch options must not be repeated",
+  "不支持这个启动协议，请使用兼容的桌面组件": "Unsupported launch protocol; use a compatible desktop component",
+  "DSH 数据目录必须是有效的绝对路径": "The DSH data directory must be a valid absolute path",
+  "工地正在读取另一个 DSH 数据目录": "Agent Site is reading a different DSH data directory",
+  "当前窗口和草稿已保留。请先退出工地，再从目标 DSH 打开。": "The current window and drafts are unchanged. Quit Agent Site, then open it from the intended DSH host.",
+  "知道了": "OK",
   "settings.json 读不出，已用默认配置": "Could not read settings.json; using defaults",
   "settings.json 的 {key} 无效，已用默认配置": "Invalid {key} in settings.json; using defaults",
   "settings.json 里的 extraPathRules 已不再使用：工地按会话的工作目录自动认定": "extraPathRules in settings.json is unused: sites are detected from session working directories",

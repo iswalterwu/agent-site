@@ -1,0 +1,22 @@
+{
+  "primitive": {
+    "surface.base": "#1D2021", "surface.raised": "#252929", "text.primary": "#EBEAE4", "text.secondary": "#B5BBB5",
+    "stroke": "#707B74", "brand": "#E8BD76", "onBrand": "#282014", "danger": "#F2AAA0",
+    "space.4": "4px", "space.8": "8px", "space.12": "12px", "space.16": "16px", "space.24": "24px", "space.32": "32px",
+    "font.meta": "14px", "font.body": "16px", "font.section": "20px", "font.hero": "40px", "radius": "4px", "target": "44px"
+  },
+  "semantic": {
+    "surface": "{primitive.surface.base}", "surfaceRaised": "{primitive.surface.raised}", "text": "{primitive.text.primary}", "textMuted": "{primitive.text.secondary}",
+    "border": "{primitive.stroke}", "accent": "{primitive.brand}", "onAccent": "{primitive.onBrand}", "error": "{primitive.danger}",
+    "gapTight": "{primitive.space.8}", "gapControl": "{primitive.space.12}", "gapGroup": "{primitive.space.16}", "inset": "{primitive.space.24}", "gapSection": "{primitive.space.32}",
+    "fontMeta": "{primitive.font.meta}", "fontBody": "{primitive.font.body}", "fontSection": "{primitive.font.section}", "fontHero": "{primitive.font.hero}",
+    "corner": "{primitive.radius}", "target": "{primitive.target}"
+  },
+  "component": {
+    "panel.fill": "{semantic.surface}", "panel.text": "{semantic.text}", "panel.muted": "{semantic.textMuted}", "panel.border": "{semantic.border}",
+    "hero.fill": "{semantic.surface}", "setup.fill": "{semantic.surfaceRaised}", "highlight": "{semantic.accent}", "highlightText": "{semantic.onAccent}", "errorText": "{semantic.error}",
+    "gap.tight": "{semantic.gapTight}", "gap.control": "{semantic.gapControl}", "gap.group": "{semantic.gapGroup}", "gap.section": "{semantic.gapSection}", "inset": "{semantic.inset}",
+    "font.meta": "{semantic.fontMeta}", "font.body": "{semantic.fontBody}", "font.section": "{semantic.fontSection}", "font.hero": "{semantic.fontHero}",
+    "corner": "{semantic.corner}", "target": "{semantic.target}"
+  }
+}

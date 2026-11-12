@@ -1,0 +1,6 @@
+{
+  "appFiles": ["main.cjs", "preload.cjs", "renderer.js", "index.html", "icon.png", "icon-waiting.png", "LICENSE", "THIRD-PARTY-NOTICES.txt", "INSTALL.md", "INSTALL.zh-CN.md", "package.json"],
+  "appBuildFiles": ["main.cjs", "preload.cjs", "renderer.js", "index.html", "icon.png", "icon-waiting.png"],
+  "pluginFiles": ["package.json", "lib/host.mjs", "lib/client.js", "cordis.patch.yml", "screenshots.json", "README.md", "README.zh-CN.md", "LICENSE", "locale/en.json", "locale/zh.json", "locale/detail.en.md", "locale/detail.zh.md", "assets/logo.svg", "assets/logo-48.png", "assets/logo-96.png", "assets/logo-192.png", "assets/scene-1x.png", "assets/scene-2x.png"],
+  "bundledLicenses": ["vue", "@vue/shared", "@vue/reactivity", "@vue/runtime-core", "@vue/runtime-dom", "ws"]
+}

@@ -9,6 +9,7 @@
 工地 App 把终端里正在干活的 pi agent 画成一座工地：Electron 透明置顶小窗 + Canvas 楼体 + Vue 卡片，读真实会话快照。技术栈 TypeScript、Node ≥ 22.19、esbuild、vitest。
 
 - 依赖方向：`src/app` → `src/main` → `src/core` → `src/protocol`；反向依赖一条都不许有，由 `tests/core/structure.test.ts` 守住。`core` 是纯函数，不碰 Electron 和文件系统。
+- 分发边界：独立 Windows App 与 `packages/dsh-plugin/` 中的可选 DSH bundle 分开。插件客户端经宿主已有的认证请求通道调用自己的启动适配器，适配器只启动用户明确配置的 App；不把 Electron、快照引擎或 pi 控制装进 DSH 宿主。插件只复用 `core` 的纯脱敏工具，不反向依赖 `app` / `main`。
 - 两种数据入口：在线 pi 会话经桥接扩展 `site-bridge` 走 WebSocket（协议 v2，HMAC 四帧握手）上报摘要事件并接收控制；其余会话（Claude Code、DSH、没装桥接的 pi）由主进程只读跟随日志。
 - 工地识别：主进程按会话 cwd 跑 git 认工地（`--git-common-dir` 归一 worktree），每个工地只读自己的 `specs/`；`settings.json` 里固定工地在发现结果之上叠加，`bridge.json` 只由 App 写。
 - 待办楼段：没有意图卡的工地不再直接画矮楼；`src/core/site.ts` 取一级会话的待办（`SessionState.todos`，来自 pi 的 `todo` / `update_plan` / 桥接的 `site_todo`、Claude 的 `TodoWrite`、DSH 的 `todo_write`），一段一会话、一层一待办；矮楼只在既没有意图卡也没有待办会话时画（SITE-7）。
@@ -33,6 +34,30 @@ specs 意图卡 + git（只读）───────────────�
 主进程：会话库 → 按工作目录分工地 → 核心计算（纯函数）→ 工地快照（多工地 + 当前工地）──IPC──► 渲染层：Canvas 场景 + Vue 卡片 / 弹框
 界面操作 → 指令服务（记台账）→ 桥接 → pi
 ```
+
+## DSH 插件与桌面分发
+
+### 模块与数据归属
+
+- `packages/dsh-plugin/` 是独立版本化的 DSH bundle，含 `dsh.bundle.patch`、宿主启动适配器和浏览器入口；根包保持开发用途的 `private: true`。DSH 官方运行时包只作为插件的 peer 依赖及类型检查用开发依赖，浏览器构建使用宿主提供的客户端模块；App 不引入 DSH 运行时依赖。`src/protocol/launch.ts` 共享纯启动消息与分发清单的类型、入口守卫和参数构造，不依赖宿主或 Electron。
+- 插件的可执行文件路径由用户配置，经 DSH 官方配置服务读写，归当前 profile 所有；适配器不自行改写 profile、用户 patch 或 Harness 主目录。插件客户端不接收进程环境、会话、凭证或 App 的桥接口令。宿主平台和目录只在宿主侧解析，启动请求不接受客户端提供的命令、参数或工作目录。
+- `src/main/roots.ts` 集中解析会话读取根，供 App 首启、引擎重开和 snapshot CLI 共用。DSH 根从显式启动参数、`DSH_HOME`、默认 `~/.dsh` 依次选取，sessions 从选中的根派生；不迁移或创建 Harness 数据，不改变 pi / Claude 的既有根。
+- 打包脚本复用 esbuild 的 App 产物，使用仅构建期依赖 `electron-builder` 输出带 Electron 运行时的 Windows x64 免安装 ZIP。插件预构建为独立 `.tgz`，不携带桌面运行时、不靠安装期脚本构建或启动程序。制品按白名单收集文件；桌面组件旁的只读分发清单由构建过程生成，声明产品、版本、平台、架构和启动协议，插件据此拒绝配错组件或不兼容版本。
+
+- 插件图文资源在自身 `assets/` 中，清单图标与 `screenshots.json` 供宿主和商店读取；浏览器所需 1×/2× 产品图在构建时内联，适配已支持宿主的离线加载，不增加资源服务。`panel.tokens.json` 经 `presentation.ts` 映射为三层 CSS 变量，`panel.css` 仅作用于插件根；样式注册随浏览器插件撤销。视觉与资源验收见 DIST-11、DIST-12。
+
+### 启动契约与生命周期
+
+- 插件宿主通过 `connection.fetch.register` 在已有 `/api` 上注册 `POST /api/agent-site/open`，认证和 owner 准入由 Connection 负责；客户端使用同源 JSON 请求，协议版本为 `1`。浏览器产物以宿主 `__ModuleLoader__` 的 CommonJS factory 形式加载，配置页复用 `SettingsFormModel` 与原生表单控件。不增加 HTTP 服务或 WebSocket 监听。请求只表示用户主动打开 App；响应是 `sent` 或可本地化的原因码，包括未配置、组件缺失、不兼容、平台不支持、启动失败、超时。`sent` 只表示已提交进程启动，不宣称窗口或会话读取已经就绪；客户端等待上限为 8 秒，不自动重试。
+- 宿主仅在本机 Windows 场景运行启动适配器，使用 `spawn` 的可执行文件与独立参数数组，不经 shell；移除子进程环境中的 `ELECTRON_RUN_AS_NODE` 和 `NODE_OPTIONS`，避免继承 Desktop 宿主的 Node 模式或启动注入。配置指向完整解压的桌面组件；组件未准备好时提供公开下载页面，不下载、安装或执行远端代码。远程使用场景不承诺把窗口显示到浏览器所在的电脑。
+- 适配器把启动协议和解析后的 DSH 根作为独立参数交给 App。App 在入口校验参数，保留直接从桌面、源码和 CLI 启动的方式；未知协议或非法路径给出可读错误。App 是单实例和读取根的唯一所有者：同根的重复启动复用已有窗口；不同根不隐式切换或覆盖设置，由已有 App 明确提示先退出再打开。既有开机自启仍由 App 按 WINDOW-24 管理，登记时携带当前解析出的 DSH 根，避免登录后回退到默认根；插件不改自启开关。
+- App 是用户独立使用的进程。插件禁用、卸载或 DSH 退出只撤销插件入口和适配器资源，不终止 App、不删除桌面组件或 App 数据，也不安装或卸载 pi 桥接。DSH 继续按 CONTROL-3 只读监控。
+
+### 制品与发布边界
+
+- 桌面组件、插件包和校验值按公开版本一起分发到 GitHub Release，商店条目指向对应的预构建插件包；首次使用由用户下载解压桌面组件并选择可执行文件。公开制品仅从已审核的公开仓库提交构建，构建目录不包含真实会话、profile、本机配置、开发历史或原型。
+- `scripts/distribution-files.json` 是桌面 ASAR 与插件归档的文件白名单，构建与 `check_distribution.py` 共用。桌面 ZIP 带双语安装说明、项目及打包 JavaScript 依赖许可证，Electron/Chromium 保留运行时许可；产品图片只用包内的安全示例。`build:distribution` 生成开发制品；`prepare:release` 先核对干净公开 `origin/main`，再构建、预检并收集当前版本的 ZIP、TGZ 和扁平文件名校验值，不执行上传。使用入口见 [distribution.md](distribution.md) 和[中文说明](distribution.zh-CN.md)，验收见 DIST-10。
+- 本地构建和隔离验证不改用户实际 DSH 安装或开机项；正式上传 Release、同步公开代码、提交商店收录 PR 分别在执行前取得授权。插件不新增遥测、自动更新、后台下载器或对 DSH 的控制；窗口、快照和现有 pi 协议保持独立。
 
 ## 桥接扩展 site-bridge
 
