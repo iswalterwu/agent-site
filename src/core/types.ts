@@ -1,5 +1,7 @@
 // 工地引擎的核心类型：只放类型和常量，不放逻辑。后面的任务往这里追加。
 
+import type { Locale } from "./i18n";
+
 // ---- feature 与楼层 ----
 
 /** 楼层 = 意图卡里的一个切片，自下而上按卡片顺序 */
@@ -96,7 +98,7 @@ export type BuildingStyle = "tower" | "factory" | "storefront";
 /** 施工阶段：按该段切片的完成比例算，整段一套过程态 */
 export type BuildStage = "empty" | "foundation" | "structure" | "done";
 export interface FeatureConfig { name: string; placement: "band" | "crown" | "office"; materials: MaterialShare[]; style?: BuildingStyle }
-export interface SiteConfig { style: BuildingStyle; features: FeatureConfig[]; pins: Record<string, Pin>; thresholds: Thresholds }
+export interface SiteConfig { style: BuildingStyle; features: FeatureConfig[]; pins: Record<string, Pin>; thresholds: Thresholds; locale?: Locale }
 export type Ribbon = "orange" | "red" | "yellow" | "green" | "grey";
 export type Location = { kind: "band"; feature: string; floor: FloorId } | { kind: "office"; feature?: string } | { kind: "gate" };
 /** 楼段卡：意图卡读不出时，除 specsDir 外全是 null */

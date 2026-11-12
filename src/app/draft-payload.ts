@@ -6,6 +6,7 @@ import type { SettingsDraft } from "./settings-form";
  */
 export function draftPayload(current: SettingsDraft): SettingsDraft {
   return {
+    language: current.language,
     theme: current.theme,
     style: current.style,
     autostart: current.autostart,

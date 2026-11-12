@@ -9,6 +9,7 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import { redact } from "../core/redact";
+import { t, localizedError, type Locale, type MessageKey } from "../core/i18n";
 import { normalizePath, resolveWatchedRepo } from "../bridge/scope";
 import { bridgeProof, newNonce, proofMatches, siteProof } from "../protocol/auth";
 import type { Nonces } from "../protocol/auth";
@@ -27,7 +28,7 @@ export interface BridgeSessionView {
 }
 
 export type BridgeCommand = { type: "pause" | "resume" | "abort" } | { type: "suggest"; text: string; mode: "steer" | "followUp" };
-export interface BridgeCommandResult { ok: boolean; error?: string }
+export interface BridgeCommandResult { ok: boolean; error?: string; messageKey?: MessageKey }
 export interface BridgeAsk {
   askId: string;
   sessionKey: string;
@@ -38,7 +39,7 @@ export interface BridgeAsk {
   context?: string;
   at: number;
 }
-export interface BridgeAskResult { accepted: boolean; reason?: string }
+export interface BridgeAskResult { accepted: boolean; reason?: string; messageKey?: MessageKey }
 
 export interface BridgeServiceOptions {
   file: string;
@@ -52,6 +53,8 @@ export interface BridgeServiceOptions {
   deadMs?: number;
   pingMs?: number;
   onChange?: () => void;
+  /** 只格式化 App 侧反馈，不改变桥接协议或远端原始错误。 */
+  locale?: () => Locale;
 }
 
 interface PendingCommand { resolve: (result: BridgeCommandResult) => void; timer: NodeJS.Timeout }
@@ -87,6 +90,7 @@ export class BridgeService {
       handshakeTimeoutMs: opts.handshakeTimeoutMs ?? 5000,
       deadMs: opts.deadMs ?? 30000,
       pingMs: opts.pingMs ?? 10000,
+      locale: opts.locale ?? (() => "zh-CN"),
     };
     this.token = opts.token ?? randomBytes(32).toString("hex");
     this.port = opts.port ?? 0;
@@ -123,7 +127,7 @@ export class BridgeService {
   stop(): void {
     if (this.stopped) return;
     this.stopped = true;
-    for (const conn of this.states.values()) this.closeConnection(conn, "App 已退出");
+    for (const conn of this.states.values()) this.closeConnection(conn, t(this.opts.locale(), "App 已退出"));
     this.states.clear();
     this.connections.clear();
     this.asksById.clear();
@@ -142,32 +146,37 @@ export class BridgeService {
 
   answer(askId: string, value: string | null): BridgeAskResult {
     const ask = this.asksById.get(askId);
-    if (ask === undefined) return { accepted: false, reason: "这个决策已经结束" };
+    if (ask === undefined) return this.answerError("这个决策已经结束");
     const conn = this.connections.get(ask.sessionKey);
-    if (conn === undefined || conn.ws.readyState !== WebSocket.OPEN) return { accepted: false, reason: "会话已离线" };
+    if (conn === undefined || conn.ws.readyState !== WebSocket.OPEN) return this.answerError("会话已离线");
     const frame: SiteToBridge = value === null
       ? { type: "answer", askId, cancelled: true }
       : { type: "answer", askId, value };
-    if (!this.write(conn.ws, frame)) return { accepted: false, reason: "连接已断开" };
+    if (!this.write(conn.ws, frame)) return this.answerError("连接已断开");
     return { accepted: true };
   }
 
   command(sessionKey: string, command: BridgeCommand): Promise<BridgeCommandResult> {
     const conn = this.connections.get(sessionKey);
-    if (conn === undefined || conn.ws.readyState !== WebSocket.OPEN) return Promise.resolve({ ok: false, error: "会话不在线" });
-    if (!conn.view.controllable) return Promise.resolve({ ok: false, error: "只读会话不能控制" });
+    if (conn === undefined || conn.ws.readyState !== WebSocket.OPEN) return Promise.resolve({ ok: false, ...localizedError(this.opts.locale(), "会话不在线") });
+    if (!conn.view.controllable) return Promise.resolve({ ok: false, ...localizedError(this.opts.locale(), "只读会话不能控制") });
     const cmdId = randomUUID();
     const frame: SiteToBridge = command.type === "suggest"
       ? { type: "suggest", cmdId, text: command.text, mode: command.mode }
       : { type: command.type, cmdId };
-    if (!this.write(conn.ws, frame)) return Promise.resolve({ ok: false, error: "连接已断开" });
+    if (!this.write(conn.ws, frame)) return Promise.resolve({ ok: false, ...localizedError(this.opts.locale(), "连接已断开") });
     return new Promise(resolve => {
       const timer = setTimeout(() => {
         conn.pending.delete(cmdId);
-        resolve({ ok: false, error: "桥接没有回执，稍后再试" });
+        resolve({ ok: false, ...localizedError(this.opts.locale(), "桥接没有回执，稍后再试") });
       }, this.opts.commandTimeoutMs);
       conn.pending.set(cmdId, { resolve, timer });
     });
+  }
+
+  private answerError(key: MessageKey): BridgeAskResult {
+    const { error, messageKey } = localizedError(this.opts.locale(), key);
+    return { accepted: false, reason: error, messageKey };
   }
 
   private accept(ws: WebSocket): void {
@@ -299,7 +308,7 @@ export class BridgeService {
     if (this.connections.get(conn.view.key) === conn) this.connections.delete(conn.view.key);
     for (const pending of conn.pending.values()) {
       clearTimeout(pending.timer);
-      pending.resolve({ ok: false, error: "连接已断开" });
+      pending.resolve({ ok: false, ...localizedError(this.opts.locale(), "连接已断开") });
     }
     conn.pending.clear();
     let announce = conn.view.online;

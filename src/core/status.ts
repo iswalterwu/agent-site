@@ -3,6 +3,7 @@
 // 气泡先拼好整句再过 bubble（E5），所以带前缀也不超过 BUBBLE_MAX；等你的详情先脱敏再截断（E1）。
 
 import { LIMITS, truncate } from "../protocol/v2";
+import { t, type Locale } from "./i18n";
 import { redact } from "./redact";
 import { bubble, lastSentence } from "./text";
 import type { ActionView, SessionState, SiteEvent, Thresholds, TrackedCall, WorkerStatus } from "./types";
@@ -21,16 +22,16 @@ const HOUR_MS = 3_600_000;
  * quiet = now − 最后事件时间。在不在工地上独立计算；状态依次试：提问没有结果 → 一级会话回合结束 → 最后一次调用
  * 没有结果且静了 stalledMinutes → 静了 idleMinutes → 在干。后三种 since 都是最后事件时间，气泡用最后一个动作的文字
  */
-export function sessionStatus(s: SessionState, lastAction: ActionView | null, now: number, t: Thresholds): StatusView {
+export function sessionStatus(s: SessionState, lastAction: ActionView | null, now: number, thresholds: Thresholds, locale: Locale = "zh-CN"): StatusView {
   const quiet = now - s.lastEventAt;
   const lastCall = s.calls.at(-1);
   const action = lastAction?.text ?? "";
-  const verdict = askWaiting(lastCall)
-    ?? (s.meta.level === 1 ? turnEndWaiting(s.events) : null)
-    ?? (lastCall !== undefined && lastCall.result === undefined && quiet >= t.stalledMinutes * MINUTE_MS
-      ? quietVerdict("stalled", s.lastEventAt, `停在：${action}`) : null)
-    ?? quietVerdict(quiet >= t.idleMinutes * MINUTE_MS ? "idle" : "working", s.lastEventAt, action);
-  return { ...verdict, text: bubble(verdict.text), onSite: quiet < t.onsiteHours * HOUR_MS };
+  const verdict = askWaiting(lastCall, locale)
+    ?? (s.meta.level === 1 ? turnEndWaiting(s.events, locale) : null)
+    ?? (lastCall !== undefined && lastCall.result === undefined && quiet >= thresholds.stalledMinutes * MINUTE_MS
+      ? quietVerdict("stalled", s.lastEventAt, t(locale, "停在：{action}", { action })) : null)
+    ?? quietVerdict(quiet >= thresholds.idleMinutes * MINUTE_MS ? "idle" : "working", s.lastEventAt, action);
+  return { ...verdict, text: bubble(verdict.text), onSite: quiet < thresholds.onsiteHours * HOUR_MS };
 }
 
 /** 判出的状态；text 是拼好的整句，还没过 bubble */
@@ -55,11 +56,11 @@ export function waitingSource(s: SessionState): string | null {
 const detailOf = (text: string): string => truncate(redact(text), LIMITS.text);
 
 /** P4：最后一次调用是提问、还没有结果 → 等你；since 是调用时间，详情是问题。标题缺失或空白时用工具名，详情为 null */
-function askWaiting(call: TrackedCall | undefined): Verdict | null {
+function askWaiting(call: TrackedCall | undefined, locale: Locale): Verdict | null {
   if (call?.call.op !== "ask" || call.result !== undefined) return null;
   const { title, tool } = call.call;
   const hasTitle = title !== undefined && title.trim() !== "";
-  return { status: "waiting", since: call.ts, text: `可能：${hasTitle ? title : tool}`, detail: hasTitle ? detailOf(title) : null };
+  return { status: "waiting", since: call.ts, text: t(locale, "可能：{text}", { text: hasTitle ? title : tool }), detail: hasTitle ? detailOf(title) : null };
 }
 
 /**
@@ -67,7 +68,7 @@ function askWaiting(call: TrackedCall | undefined): Verdict | null {
  * 只取最新 prompt 之后、该 turn_end 之前的最后一个 text；没有文字或末句为空时写"回合结束"，详情为 null（E22）。
  * 同一回复的几个 turn_end 同时间戳，取哪个都一样，不去重
  */
-function turnEndWaiting(events: readonly SiteEvent[]): Verdict | null {
+function turnEndWaiting(events: readonly SiteEvent[], locale: Locale): Verdict | null {
   const markerIndex = events.findLastIndex((ev) => ev.kind === "prompt" || ev.kind === "tool_call" || ev.kind === "turn_end");
   const marker = events[markerIndex];
   if (marker?.kind !== "turn_end") return null;
@@ -75,6 +76,6 @@ function turnEndWaiting(events: readonly SiteEvent[]): Verdict | null {
   const said = events.slice(promptIndex + 1, markerIndex).findLast((ev): ev is TextEvent => ev.kind === "text");
   const sentence = said === undefined ? "" : lastSentence(said.text);
   return said === undefined || sentence === ""
-    ? { status: "waiting", since: marker.ts, text: "可能：回合结束", detail: null }
-    : { status: "waiting", since: marker.ts, text: `可能：${sentence}`, detail: detailOf(said.text) };
+    ? { status: "waiting", since: marker.ts, text: t(locale, "可能：回合结束"), detail: null }
+    : { status: "waiting", since: marker.ts, text: t(locale, "可能：{text}", { text: sentence }), detail: detailOf(said.text) };
 }

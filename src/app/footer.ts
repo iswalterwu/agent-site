@@ -1,6 +1,7 @@
 import type { Ribbon, Worker } from "../core/types";
 import { FOOTER_HEIGHT } from "./constants";
 import { TYPE, type Tone } from "./theme";
+import { t, type Locale } from "../core/i18n";
 
 /** 底栏起点和右界：右下角齿轮常占 32 CSS px，底栏内容停在它左边 */
 const START_X = 8;
@@ -13,13 +14,20 @@ const LIGHT_HEIGHT = 12;
 /** 一排最多 6 盏：再配上 12 逻辑 px 的格子，2× 下正好 24×24 CSS 的点击目标 */
 const MAX_LIGHTS = 6;
 
-export const TONE_LABEL: Record<Tone, string> = {
+export const TONE_LABEL = {
   waiting: "等你",
   error: "出错",
   stalled: "停工",
   working: "在干",
   idle: "空闲",
-};
+} as const;
+
+const LEGEND_LABEL = {
+  waiting: "legend.waiting", error: "legend.error", stalled: "legend.stalled",
+  working: "legend.working", idle: "legend.idle",
+} as const;
+/** 5.5 逻辑 px 原字号下的英文短标签占位；第一行到 x=89，避开右下角齿轮。 */
+const EN_TEXT_WIDTH: Record<Tone, number> = { waiting: 12, error: 13, stalled: 12, working: 14, idle: 10 };
 
 const TONE_ORDER: readonly Tone[] = ["waiting", "error", "stalled", "working", "idle"];
 
@@ -71,15 +79,16 @@ export function workerTone(worker: Worker): Tone {
 }
 
 /** 底栏两行：图例一行（五色 + 文字），灯一行（最多 6 个，多出来的写 +N）。灯跨工地混排，每盏带着自己的工地 */
-export function layoutFooter(entries: readonly FooterEntry[], height: number): FooterLayout {
+export function layoutFooter(entries: readonly FooterEntry[], height: number, locale: Locale = "zh-CN"): FooterLayout {
   const top = height - FOOTER_HEIGHT;
   const legend: LegendItem[] = [];
-  let x = START_X;
+  const english = locale === "en";
+  let x = english ? 4 : START_X;
   for (const tone of TONE_ORDER) {
-    const label = TONE_LABEL[tone];
-    const width = LEGEND_DOT + LEGEND_GAP + label.length * TYPE.caption;
+    const label = t(locale, LEGEND_LABEL[tone]);
+    const width = LEGEND_DOT + LEGEND_GAP + (english ? EN_TEXT_WIDTH[tone] : label.length * TYPE.caption);
     legend.push({ tone, label, x, y: top + 4, width, height: 10 });
-    x += width + LEGEND_ITEM_GAP;
+    x += width + (english ? 1 : LEGEND_ITEM_GAP);
   }
   const sorted = [...entries].sort((a, b) =>
     TONE_ORDER.indexOf(workerTone(a.worker)) - TONE_ORDER.indexOf(workerTone(b.worker))

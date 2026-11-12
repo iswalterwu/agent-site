@@ -3,6 +3,7 @@ import { deriveActions } from "./actions";
 import { attribute, inferRole, modelFamily } from "./attribution";
 import { bandCard, orderFeatures, resolveStyle, ribbonColor, stageOf } from "./building";
 import { inferFloors } from "./floors";
+import { t, type Locale } from "./i18n";
 import { redact } from "./redact";
 import { brief } from "./text";
 import { traceOf } from "./trace";
@@ -160,10 +161,11 @@ function floorFor(pinned: FloorId | null, band: Band | undefined): FloorId {
 }
 
 function makeWorker(s: SessionState, site: SiteInput, config: SiteConfig, now: number, bands: Band[], office: SiteView["office"], mini: boolean, todoBand?: Band): { worker: Worker; onSite: boolean } {
+  const locale = config.locale ?? "zh-CN";
   const a = attribute(s, site.features.map(f => f.name), config.pins[s.meta.key]);
-  const actions = deriveActions(s).map(action => ({ ...action, text: redact(action.text) }));
-  const status = sessionStatus(s, actions.at(-1) ?? null, now, config.thresholds);
-  const detail = detailOf(s, status);
+  const actions = deriveActions(s, locale).map(action => ({ ...action, text: redact(action.text) }));
+  const status = sessionStatus(s, actions.at(-1) ?? null, now, config.thresholds, locale);
+  const detail = detailOf(s, status, locale);
   const band = "feature" in a ? bands.find(b => b.feature === a.feature) : undefined;
   let location: Location;
   if (todoBand !== undefined) location = { kind: "band", feature: todoBand.feature, floor: floorFor(null, todoBand) };
@@ -175,8 +177,8 @@ function makeWorker(s: SessionState, site: SiteInput, config: SiteConfig, now: n
   const lastTest = actions.findLast(x => x.kind === "test");
   const worker: Worker = { key: s.meta.key, harness: s.meta.harness, nativeId: s.meta.nativeId, level: s.meta.level, parentKey: s.meta.parentKey ?? null,
     readOnly: true, role: role.role, roleReason: role.reason, model: s.model === undefined ? null : redact(s.model), modelFamily: modelFamily(s.model), location,
-    attribution: todoBand !== undefined ? { rule: "none", detail: "会话待办" } : { ...a, detail: redact(a.detail) }, status: status.status, statusSince: status.since, bubble: redact(status.text),
-    statusDetail: detail, trace: traceOf(s.events), actions: actions.slice(-20),
+    attribution: todoBand !== undefined ? { rule: "none", detail: t(locale, "会话待办") } : { ...a, detail: redact(a.detail) }, status: status.status, statusSince: status.since, bubble: redact(status.text),
+    statusDetail: detail, trace: traceOf(s.events, locale), actions: actions.slice(-20),
     todos: s.todos ? s.todos.map(t => ({ ...t, text: redact(t.text) })) : null,
     lastTestFailure: lastTest?.outcome === "fail" ? { at: lastTest.at, text: redact(lastTest.text) } : null,
     startedAt: s.meta.startedAt, lastEventAt: s.lastEventAt,
@@ -186,7 +188,7 @@ function makeWorker(s: SessionState, site: SiteInput, config: SiteConfig, now: n
 }
 
 /** 等你用问题原文；在干优先用最后一段回复 / 思考，再退到最近动作；统一压到 4–5 句 */
-function detailOf(s: SessionState, status: ReturnType<typeof sessionStatus>): string | null {
+function detailOf(s: SessionState, status: ReturnType<typeof sessionStatus>, locale: Locale): string | null {
   if (status.status === "waiting") {
     const source = waitingSource(s) ?? status.detail;
     return source === null ? null : brief(source);
@@ -198,6 +200,6 @@ function detailOf(s: SessionState, status: ReturnType<typeof sessionStatus>): st
       (ev.kind === "text" || ev.kind === "thinking") && ev.text.trim() !== "");
     if (prose !== undefined) return brief(prose.text);
   }
-  const recent = deriveActions({ ...s, events: current }).slice(-3).map(action => action.text).filter(text => text !== "");
-  return recent.length === 0 ? null : brief(`最近：${recent.join("；")}`);
+  const recent = deriveActions({ ...s, events: current }, locale).slice(-3).map(action => action.text).filter(text => text !== "");
+  return recent.length === 0 ? null : brief(t(locale, "最近：{actions}", { actions: recent.join(t(locale, "core.actionSeparator")) }));
 }

@@ -3,22 +3,23 @@
 // 文字一律先脱敏再截断（E1），和气泡共用一条红线。
 
 import { truncate } from "../protocol/v2";
+import { t, type Locale } from "./i18n";
 import { redact } from "./redact";
 import type { SiteEvent, TraceEntry, ToolCall } from "./types";
 
 export const TRACE_MAX = 10;
 export const TRACE_TEXT_MAX = 160;
 
-export function traceOf(events: readonly SiteEvent[]): TraceEntry[] {
+export function traceOf(events: readonly SiteEvent[], locale: Locale = "zh-CN"): TraceEntry[] {
   const entries: TraceEntry[] = [];
   for (const event of events) {
-    const entry = traceEntry(event);
+    const entry = traceEntry(event, locale);
     if (entry !== null) entries.push(entry);
   }
   return entries.slice(-TRACE_MAX);
 }
 
-function traceEntry(event: SiteEvent): TraceEntry | null {
+function traceEntry(event: SiteEvent, locale: Locale): TraceEntry | null {
   switch (event.kind) {
     case "prompt": return entry(event.ts, "prompt", event.text);
     case "text": return entry(event.ts, "text", event.text);
@@ -26,10 +27,10 @@ function traceEntry(event: SiteEvent): TraceEntry | null {
     case "tool_call": return entry(event.ts, "tool_call", callText(event.call));
     case "tool_result": {
       const failed = event.failed ?? 0;
-      return entry(event.ts, "tool_result", failed > 0 ? `失败 ${failed}` : event.ok ? "成功" : "失败");
+      return entry(event.ts, "tool_result", failed > 0 ? t(locale, "失败 {count}", { count: failed }) : t(locale, event.ok ? "成功" : "失败"));
     }
     case "model": return event.explicit ? entry(event.ts, "model", event.model) : null;
-    case "compaction": return entry(event.ts, "compaction", "压缩上下文");
+    case "compaction": return entry(event.ts, "compaction", t(locale, "压缩上下文"));
     case "api_error": return entry(event.ts, "api_error", event.message);
     default: return null;
   }

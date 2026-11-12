@@ -1,6 +1,8 @@
 import { createApp, h, onBeforeUnmount, onMounted, ref, type VNode } from "vue";
+import type { Locale, MessageKey } from "../core/i18n";
+import { setUiLocale, ui, uiLocale } from "./i18n";
 import { activeSite } from "../core/site";
-import type { SiteSnapshot, TraceEntry } from "../core/types";
+import type { SiteSnapshot } from "../core/types";
 import type { AppAsk, AppRect, AppView, MenuAction } from "./api";
 import type { SettingsDraft } from "./settings-form";
 import { draftPayload } from "./draft-payload";
@@ -12,7 +14,7 @@ import { appMenu, menuDispatch, siteMenuOf, submenuShift, type MenuEntry, type M
 import { drawBuilding, drawExitingWorker, drawRibbon } from "./draw";
 import { hitTest, layoutBuilding, withoutBubbles, type BuildingLayout, type LayoutHit, type LayoutWorker } from "./layout";
 import { canvasGeometry } from "./scale";
-import { setTheme, themeName, TOPBAR_HEIGHT } from "./theme";
+import { setTheme, themeName, TOPBAR_HEIGHT, TYPE, FONT_SANS } from "./theme";
 import type { ThemeName } from "./theme";
 import { departedWorkers, exitAlpha, exitProgress, exitX, WALK_OUT_MS } from "./transitions";
 import { CARD_WIDTH } from "./window";
@@ -23,12 +25,17 @@ type CardSelection = { kind: "band"; feature: string } | { kind: "worker"; key: 
   | { kind: "diagnostics" } | { kind: "settings" } | { kind: "ask"; askId: string };
 interface Hover { feature: string; y: number; height: number }
 
-const SUMMARY_WIDTH = 204;
-const SUMMARY_HEIGHT = 204;
-const TRACE_LABEL: Record<TraceEntry["kind"], string> = {
+/** 程序反馈按标识重新取词；外部错误只脱敏，不按文字内容猜测来源。 */
+function feedbackText(value: { text: string | null; messageKey?: MessageKey }, fallback: MessageKey): string {
+  return redact(value.messageKey === undefined ? value.text ?? ui(fallback) : ui(value.messageKey));
+}
+
+const SUMMARY_WIDTH = 264;
+const SUMMARY_HEIGHT = 244;
+const TRACE_LABEL = {
   prompt: "提示", text: "回复", thinking: "思考", tool_call: "工具", tool_result: "结果",
   model: "模型", compaction: "压缩", api_error: "报错",
-};
+} as const;
 const COLLAPSE_MS = 3000;
 
 const App = {
@@ -42,7 +49,9 @@ const App = {
     /** 设置面板：面板里的草稿、错误和"已保存"提示 */
     const draft = ref<SettingsDraft | null>(null);
     const errors = ref<string[]>([]);
+    const saveError = ref<string | null>(null);
     const saved = ref(false);
+    const locale = ref(uiLocale());
     const collapsed = ref(false);
     const hover = ref<Hover | null>(null);
     const summaryLocked = ref(false);
@@ -69,11 +78,11 @@ const App = {
     let exits: Array<{ worker: LayoutWorker; started: number }> = [];
     let exitFrame: number | null = null;
     const controlBusy = ref<string | null>(null);
-    const controlError = ref<{ key: string; text: string } | null>(null);
+    const controlError = ref<{ key: string; text: string | null; messageKey?: MessageKey; fallback: "控制失败" | "建议发送失败" } | null>(null);
     const drafts = ref<SuggestionDrafts>(emptyDrafts());
     const asks = ref<AppAsk[]>([]);
     const askBusy = ref<string | null>(null);
-    const askError = ref<{ askId: string; text: string } | null>(null);
+    const askError = ref<{ askId: string; text: string | null; messageKey?: MessageKey } | null>(null);
     const askAccepted = ref<Record<string, boolean>>({});
     /** 在卡片上点了"取消这个提问"的：桥接会把它当明确跳过，模型按自己的判断继续 */
     const askCancelled = ref<Record<string, boolean>>({});
@@ -89,9 +98,9 @@ const App = {
       controlError.value = null;
       try {
         const result = await window.agentSite.control(key, action);
-        if (!result.ok) controlError.value = { key, text: result.error ?? "控制失败" };
+        if (!result.ok) controlError.value = { key, text: result.error ?? null, messageKey: result.messageKey, fallback: "控制失败" };
       } catch {
-        controlError.value = { key, text: "控制失败" };
+        controlError.value = { key, text: null, fallback: "控制失败" };
       } finally {
         if (controlBusy.value === key) controlBusy.value = null;
       }
@@ -99,7 +108,7 @@ const App = {
 
     const sendAbort = (key: string): void => {
       if (controlBusy.value !== null) return;
-      if (!window.confirm("立即中断这个会话？正在运行的一步会被中止。")) return;
+      if (!window.confirm(ui("立即中断这个会话？正在运行的一步会被中止。"))) return;
       void sendControl(key, "abort");
     };
 
@@ -112,9 +121,9 @@ const App = {
       try {
         const result = await window.agentSite.suggest(key, text, mode);
         if (result.ok) drafts.value = clearSent(drafts.value, key, text);
-        else controlError.value = { key, text: result.error ?? "建议发送失败" };
+        else controlError.value = { key, text: result.error ?? null, messageKey: result.messageKey, fallback: "建议发送失败" };
       } catch {
-        controlError.value = { key, text: "建议发送失败" };
+        controlError.value = { key, text: null, fallback: "建议发送失败" };
       } finally {
         if (controlBusy.value === key) controlBusy.value = null;
       }
@@ -129,9 +138,9 @@ const App = {
           askAccepted.value = { ...askAccepted.value, [askId]: true };
           if (value === null) askCancelled.value = { ...askCancelled.value, [askId]: true };
         }
-        else askError.value = { askId, text: result.reason ?? "回答失败" };
+        else askError.value = { askId, text: result.reason ?? null, messageKey: result.messageKey };
       } catch {
-        askError.value = { askId, text: "回答失败" };
+        askError.value = { askId, text: null };
       } finally {
         if (askBusy.value === askId) askBusy.value = null;
       }
@@ -154,6 +163,13 @@ const App = {
       }
     };
 
+    const applyLocale = (next: Locale): void => {
+      setUiLocale(next);
+      locale.value = next;
+      document.documentElement.lang = next;
+      if (menuOpen.value) requestAnimationFrame(fitSubmenu);
+    };
+
     /** 切配色：Canvas 的调色板和 CSS 变量一起换，菜单、按钮这些 DOM 也跟着变 */
     const applyTheme = (next: ThemeName): void => {
       theme.value = next;
@@ -165,7 +181,11 @@ const App = {
     const draw = (): void => {
       const element = canvas.value;
       if (element === null || snapshot === null || view === null) return;
-      const built = layoutBuilding(snapshot, view.windowHeight / view.scale, stableX);
+      const context = element.getContext("2d");
+      if (context === null) return;
+      context.font = `400 ${TYPE.caption}px ${FONT_SANS}`;
+      const built = layoutBuilding(snapshot, view.windowHeight / view.scale, stableX, view.locale,
+        value => context.measureText(value).width);
       stableX = new Map(built.workers.map(worker => [worker.key, worker.x]));
       const next = modes.value.demo ? withoutBubbles(built) : built;
       layout = next;
@@ -175,8 +195,6 @@ const App = {
       // 写同样的值也会让浏览器重算样式和布局，画布会重上一帧；只在真的变了才写
       if (element.style.width !== `${geometry.cssWidth}px`) element.style.width = `${geometry.cssWidth}px`;
       if (element.style.height !== `${geometry.cssHeight}px`) element.style.height = `${geometry.cssHeight}px`;
-      const context = element.getContext("2d");
-      if (context === null) return;
       context.setTransform(geometry.drawScaleX, 0, 0, geometry.drawScaleY, 0, 0);
       syncExits(next);
       if (collapsed.value) drawRibbon(context, next, blinkOn);
@@ -434,7 +452,7 @@ const App = {
     };
 
     onMounted(async () => {
-      window.agentSite.onView((next) => { view = next; applyTheme(next.theme); draw(); });
+      window.agentSite.onView((next) => { view = next; applyLocale(next.locale); applyTheme(next.theme); draw(); });
       window.agentSite.onPinned((next) => { pinned.value = next; if (!collapsed.value) draw(); });
       window.agentSite.onModes((next) => {
         modes.value = next;
@@ -450,6 +468,7 @@ const App = {
         collapsed.value = false;
         draft.value = payload?.draft ?? null;
         errors.value = [];
+        saveError.value = null;
         saved.value = false;
         setCard({ kind: "settings" });
       });
@@ -507,7 +526,8 @@ const App = {
         pinned.value = boot.pinned;
         windowHovered = boot.hovered;
         everHovered = boot.hovered;
-        view = { scale: boot.scale, workArea: boot.workArea, windowHeight: boot.windowHeight, theme: boot.theme };
+        view = { scale: boot.scale, workArea: boot.workArea, windowHeight: boot.windowHeight, theme: boot.theme, locale: boot.locale };
+        applyLocale(boot.locale);
         applyTheme(boot.theme);
         applyAsks(boot.asks);
         draw();
@@ -575,22 +595,25 @@ const App = {
       element.style.transform = shift === 0 ? "" : `translateY(${shift}px)`;
     }
     const MENU_HOVER_MS = 120;
-    return () => [
-      h("canvas", { ref: canvas }),
-      card.value === null ? null : renderCard(),
-      collapsed.value && hover.value !== null && summaryRect !== null ? renderSummary() : null,
-      !collapsed.value && modes.value.demo ? h("div", { class: "demo-tag", "data-agent-ui": "demo",
-        style: { left: `${offsetX() + 8}px` } }, "演示") : null,
-      collapsed.value ? null : h("div", {
-        class: "drag", "data-agent-ui": "drag", title: "拖动窗口",
-        style: { left: `${offsetX()}px`, right: "0" },
-      }, [h("span", { class: "grip" })]),
-      collapsed.value ? null : h("button", {
-        class: "gear icon-button", type: "button", "data-agent-ui": "menu", "aria-label": "打开工地菜单",
-        title: "工地菜单", onClick: toggleMenu,
-      }, [icon("gear")]),
-      !collapsed.value && menuOpen.value ? renderMenu() : null,
-    ];
+    return () => {
+      locale.value; // ui 的进程内语言不是 Vue ref；语言变化要重画所有 DOM 文案，但不重建卡片 / 草稿
+      return [
+        h("canvas", { ref: canvas }),
+        card.value === null ? null : renderCard(),
+        collapsed.value && hover.value !== null && summaryRect !== null ? renderSummary() : null,
+        !collapsed.value && modes.value.demo ? h("div", { class: "demo-tag", "data-agent-ui": "demo",
+          style: { left: `${offsetX() + 8}px` } }, ui("演示")) : null,
+        collapsed.value ? null : h("div", {
+          class: "drag", "data-agent-ui": "drag", title: ui("拖动窗口"),
+          style: { left: `${offsetX()}px`, right: "0" },
+        }, [h("span", { class: "grip" })]),
+        collapsed.value ? null : h("button", {
+          class: "gear icon-button", type: "button", "data-agent-ui": "menu", "aria-label": ui("打开工地菜单"),
+          title: ui("工地菜单"), onClick: toggleMenu,
+        }, [icon("gear")]),
+        !collapsed.value && menuOpen.value ? renderMenu() : null,
+      ];
+    };
 
     /** 菜单里的工地：只有一个工地时不给这一组；人数按可见快照算（主进程推过来的已经是可见投影） */
     function sitesMenu(): SiteMenu | null {
@@ -679,18 +702,18 @@ const App = {
       }, [
         h("div", { class: "summary-head" }, [
           h("h2", { title: band.title }, band.title),
-          h("button", { class: "summary-close icon-button", type: "button", "aria-label": "关闭摘要",
-            title: "关闭", onClick: closeSummary }, [icon("close")]),
+          h("button", { class: "summary-close icon-button", type: "button", "aria-label": ui("关闭摘要"),
+            title: ui("关闭"), onClick: closeSummary }, [icon("close")]),
         ]),
-        summaryRow("状态", summary.status),
-        summaryRow("人员", summary.people),
-        summaryRow("当前", summary.current),
-        summaryRow("验收", summary.acceptance),
-        ...(summary.risk === "" ? [] : [summaryRow("风险", summary.risk)]),
+        summaryRow(ui("状态"), summary.status),
+        summaryRow(ui("人员"), summary.people),
+        summaryRow(ui("当前"), summary.current),
+        summaryRow(ui("验收"), summary.acceptance),
+        ...(summary.risk === "" ? [] : [summaryRow(ui("风险"), summary.risk)]),
         h("div", { class: "cta" }, [
-          h("span", null, summaryLocked.value ? "已锁定 · 点击展开" : "点击展开"),
+          h("span", null, ui(summaryLocked.value ? "已锁定 · 点击展开" : "点击展开")),
           h("svg", { class: "lock-ring", viewBox: "0 0 16 16", "aria-hidden": "true" }, [
-            h("title", null, "悬停 5 秒锁定"),
+            h("title", null, ui("悬停 5 秒锁定")),
             h("circle", { class: "ring-track", cx: "8", cy: "8", r: "6" }),
             h("circle", { class: "ring-fill", cx: "8", cy: "8", r: "6", pathLength: "100",
               style: { animationDuration: `${SUMMARY_LOCK_MS}ms` } }),
@@ -704,71 +727,71 @@ const App = {
       return h("div", { class: "card", "data-agent-ui": "card" }, [
         cardHead(band.title, () => setCard(null)),
         h("div", { class: "lead" }, `${band.feature} · ${summary.status}`),
-        cardSection("概况", band.source === "todos" ? [
-          kv("彩带", TONE_LABEL[band.tone]),
-          kv("人员", summary.people),
-          kv("待办", band.slices === null ? "—" : `${band.slices.done}/${band.slices.total}`),
-          kv("来源", "会话待办"),
+        cardSection(ui("概况"), band.source === "todos" ? [
+          kv(ui("彩带"), ui(TONE_LABEL[band.tone])),
+          kv(ui("人员"), summary.people),
+          kv(ui("待办"), band.slices === null ? "—" : `${band.slices.done}/${band.slices.total}`),
+          kv(ui("来源"), ui("会话待办")),
         ] : [
-          kv("彩带", TONE_LABEL[band.tone]),
-          kv("人员", summary.people),
-          kv("切片", band.slices === null ? "—" : `${band.slices.done}/${band.slices.total}`),
-          kv("风险", band.risk ?? "—"),
+          kv(ui("彩带"), ui(TONE_LABEL[band.tone])),
+          kv(ui("人员"), summary.people),
+          kv(ui("切片"), band.slices === null ? "—" : `${band.slices.done}/${band.slices.total}`),
+          kv(ui("风险"), band.risk ?? "—"),
           kv("AC", band.ac === null ? "—" : String(band.ac)),
-          kv("待定", band.open === null ? "—" : String(band.open)),
+          kv(ui("待定"), band.open === null ? "—" : String(band.open)),
         ]),
-        cardSection(band.source === "todos" ? "当前待办" : "当前切片", [
+        cardSection(ui(band.source === "todos" ? "当前待办" : "当前切片"), [
           band.current === null
-            ? h("div", { class: "muted" }, band.tarp ?? (band.source === "todos" ? "没有进行中的待办" : "没有当前切片"))
+            ? h("div", { class: "muted" }, band.tarp ?? ui(band.source === "todos" ? "没有进行中的待办" : "没有当前切片"))
             : h("div", { class: "one-line",
               title: band.source === "todos" ? band.current.title
                 : `${band.current.id} ${band.current.title} · ${band.current.stepsDone}/${band.current.stepsTotal}` },
             band.source === "todos" ? band.current.title
               : `${band.current.id} ${band.current.title} · ${band.current.stepsDone}/${band.current.stepsTotal}`),
         ]),
-        cardSection("人员", band.workers.length === 0
-          ? [h("div", { class: "muted" }, "没人")]
+        cardSection(ui("人员"), band.workers.length === 0
+          ? [h("div", { class: "muted" }, ui("没人"))]
           : band.workers.map(worker => h("div", { class: "card-row" }, [
-            h("span", null, `${worker.role === "foreman" ? "工头" : worker.role === "inspector" ? "监理" : "工人"} · ${statusOf(worker.status)}`),
-            worker.readOnly ? h("span", { class: "tag" }, "只读") : null,
+            h("span", null, `${ui(worker.role === "foreman" ? "工头" : worker.role === "inspector" ? "监理" : "工人")} · ${statusOf(worker.status)}`),
+            worker.readOnly ? h("span", { class: "tag" }, ui("只读")) : null,
           ]))),
-        cardSection(band.source === "todos" ? "会话" : "图纸", [h("div", { class: "muted path", title: band.specsDir }, band.specsDir)]),
+        cardSection(ui(band.source === "todos" ? "会话" : "图纸"), [h("div", { class: "muted path", title: band.specsDir }, band.specsDir)]),
       ]);
     }
 
     function workerCard(worker: WorkerCardView): VNode {
       if (snapshot === null) return h("div");
       const now = snapshot.at;
-      const status = worker.control?.paused === true ? "已暂停" : worker.statusLabel;
+      const status = worker.control?.paused === true ? ui("已暂停") : worker.statusLabel;
       const pendingAsk = asks.value.find(ask => ask.sessionKey === worker.key);
       return h("div", { class: "card", "data-agent-ui": "card" }, [
         cardHead(worker.title, () => setCard(null)),
         h("div", { class: "lead" }, [
           `${worker.site} · ${status} · ${formatSince(now, worker.statusSince)}`,
-          worker.readOnly ? h("span", { class: "tag", title: "App 还没接桥接控制，当前只能看" }, "只读")
-            : worker.control === null ? null : h("span", { class: "tag" }, "在线"),
+          worker.readOnly ? h("span", { class: "tag", title: ui("App 还没接桥接控制，当前只能看") }, ui("只读"))
+            : worker.control === null ? null : h("span", { class: "tag" }, ui("在线")),
         ]),
-        worker.statusDetail === null ? null : cardSection("现在", [
+        worker.statusDetail === null ? null : cardSection(ui("现在"), [
           h("div", { class: "status-detail" }, worker.statusDetail),
         ]),
-        modes.value.demo || pendingAsk === undefined ? null : cardSection("决策", [
+        modes.value.demo || pendingAsk === undefined ? null : cardSection(ui("决策"), [
           h("div", { class: "status-detail" }, redact(pendingAsk.question)),
-          h("div", { class: "muted" }, pendingAsk.allowOther ? "等你回答 · 也可以自己写" : "等你回答"),
-          h("button", { class: "control-button", onClick: () => setCard({ kind: "ask", askId: pendingAsk.askId }) }, "打开决策卡"),
+          h("div", { class: "muted" }, ui(pendingAsk.allowOther ? "等你回答 · 也可以自己写" : "等你回答")),
+          h("button", { class: "control-button", onClick: () => setCard({ kind: "ask", askId: pendingAsk.askId }) }, ui("打开决策卡")),
         ]),
-        worker.control === null ? null : cardSection("控制", [
+        worker.control === null ? null : cardSection(ui("控制"), [
           h("div", { class: "muted" }, worker.control.paused
-            ? `已暂停${worker.control.holding === null ? "" : ` · 拦在 ${worker.control.holding.tool}`}`
-            : "桥接在线，可以暂停或给建议"),
+            ? worker.control.holding === null ? ui("已暂停") : ui("已暂停 · 拦在 {tool}", { tool: redact(worker.control.holding.tool) })
+            : ui("桥接在线，可以暂停或给建议")),
           h("div", { class: "control-row" }, [
             h("button", { class: "control-button", disabled: controlBusy.value !== null,
               onClick: () => void sendControl(worker.key, worker.control!.paused ? "resume" : "pause") },
-              controlBusy.value === worker.key ? "处理中…" : worker.control.paused ? "继续" : "暂停"),
+              ui(controlBusy.value === worker.key ? "处理中…" : worker.control.paused ? "继续" : "暂停")),
             h("button", { class: "control-button danger", disabled: controlBusy.value !== null,
-              onClick: () => sendAbort(worker.key) }, "中断"),
+              onClick: () => sendAbort(worker.key) }, ui("中断")),
           ]),
           h("div", { class: "suggest-form" }, [
-            h("textarea", { class: "suggest-input", rows: 3, placeholder: "给这个会话一条建议…",
+            h("textarea", { class: "suggest-input", rows: 3, placeholder: ui("给这个会话一条建议…"),
               value: textFor(drafts.value, worker.key), disabled: controlBusy.value !== null,
               onInput: (event: Event) => { drafts.value = setText(drafts.value, worker.key, (event.target as HTMLTextAreaElement).value); } }),
             h("div", { class: "suggest-actions" }, [
@@ -777,40 +800,41 @@ const App = {
                   drafts.value = setMode(drafts.value, worker.key,
                     (event.target as HTMLSelectElement).value === "followUp" ? "followUp" : "steer");
                 } }, [
-                h("option", { value: "steer" }, "插话"),
-                h("option", { value: "followUp" }, "做完再说"),
+                h("option", { value: "steer" }, ui("插话")),
+                h("option", { value: "followUp" }, ui("做完再说")),
               ]),
               h("button", { class: "control-button", disabled: controlBusy.value !== null || textFor(drafts.value, worker.key).trim() === "",
                 onClick: () => void sendSuggest(worker.key) },
-                controlBusy.value === worker.key ? "发送中…" : "发送建议"),
+                ui(controlBusy.value === worker.key ? "发送中…" : "发送建议")),
             ]),
           ]),
         ]),
-        controlError.value?.key === worker.key ? h("div", { class: "control-error" }, controlError.value.text) : null,
-        cardSection("会话", [
-          kv("来源", worker.harness),
-          kv("模型", worker.model ?? "—"),
-          kv("会话", worker.nativeId),
-          kv("位置", worker.location),
-          worker.readOnly ? h("div", { class: "muted" }, "只读：App 还没接桥接控制，当前只能看。") : null,
+        controlError.value?.key === worker.key ? h("div", { class: "control-error" },
+          feedbackText(controlError.value, controlError.value.fallback)) : null,
+        cardSection(ui("会话"), [
+          kv(ui("来源"), worker.harness),
+          kv(ui("模型"), worker.model ?? "—"),
+          kv(ui("会话"), worker.nativeId),
+          kv(ui("位置"), worker.location),
+          worker.readOnly ? h("div", { class: "muted" }, ui("只读：App 还没接桥接控制，当前只能看。")) : null,
         ]),
-        modes.value.demo ? null : cardSection("最近动作", worker.actions.length === 0
-          ? [h("div", { class: "muted" }, "还没有动作")]
+        modes.value.demo ? null : cardSection(ui("最近动作"), worker.actions.length === 0
+          ? [h("div", { class: "muted" }, ui("还没有动作"))]
           : worker.actions.map(action => h("div", { class: "card-row" }, [
             h("span", { class: "row-main", title: action.text }, action.text),
             h("span", { class: "row-meta" }, formatSince(now, action.at)),
           ]))),
         modes.value.demo ? null : cardSection("Trace", worker.trace.length === 0
-          ? [h("div", { class: "muted" }, "没有可显示的轨迹")]
+          ? [h("div", { class: "muted" }, ui("没有可显示的轨迹"))]
           : worker.trace.map(entry => h("div", { class: "card-row" }, [
-            h("span", { class: "trace-kind" }, TRACE_LABEL[entry.kind]),
+            h("span", { class: "trace-kind" }, ui(TRACE_LABEL[entry.kind])),
             h("span", { class: "row-main", title: entry.text }, entry.text),
             h("span", { class: "row-meta" }, formatSince(now, entry.at)),
           ]))),
-        modes.value.demo || worker.todos === null ? null : cardSection("待办", worker.todos.map(todo => h("div", { class: "card-row" }, [
+        modes.value.demo || worker.todos === null ? null : cardSection(ui("待办"), worker.todos.map(todo => h("div", { class: "card-row" }, [
           h("span", { class: "row-main" }, `${todo.status === "completed" ? "✓" : todo.status === "in_progress" ? "•" : "○"} ${todo.text}`),
         ]))),
-        modes.value.demo || worker.testFailure === null ? null : cardSection("问题", [
+        modes.value.demo || worker.testFailure === null ? null : cardSection(ui("card.issues"), [
           h("div", null, worker.testFailure.text),
           h("div", { class: "muted" }, formatSince(now, worker.testFailure.at)),
         ]),
@@ -830,43 +854,44 @@ const App = {
       const context = ask.context === undefined ? null : redact(ask.context);
       if (modes.value.demo) {
         return h("div", { class: "card", "data-agent-ui": "card" }, [
-          cardHead("决策", () => setCard(null)),
-          h("div", { class: "lead" }, "演示模式已隐藏决策内容"),
-          h("div", { class: "muted" }, "退出演示模式后可回答；提问仍留在 App 里。"),
+          cardHead(ui("决策"), () => setCard(null)),
+          h("div", { class: "lead" }, ui("演示模式已隐藏决策内容")),
+          h("div", { class: "muted" }, ui("退出演示模式后可回答；提问仍留在 App 里。")),
         ]);
       }
       return h("div", { class: "card", "data-agent-ui": "card" }, [
-        cardHead(`决策 · ${worker === null ? "在线会话" : worker.title}`, () => setCard(null)),
+        cardHead(ui("决策 · {worker}", { worker: worker === null ? ui("在线会话") : worker.title }), () => setCard(null)),
         h("div", { class: "lead" }, [
-          "等你回答 · 桥接在线",
-          h("span", { class: "tag" }, "决策"),
+          ui("等你回答 · 桥接在线"),
+          h("span", { class: "tag" }, ui("决策")),
         ]),
-        cardSection("问题", [
+        cardSection(ui("问题"), [
           h("div", { class: "status-detail" }, question),
           context === null ? null : h("div", { class: "muted ask-context" }, context),
         ]),
         h("div", { class: "ask-options" }, ask.options.map((option, index) => h("button", {
           class: "control-button ask-option", disabled: busy || accepted,
           onClick: () => void answerAsk(ask.askId, option),
-        }, option === "" ? `选项 ${index + 1}` : redact(option)))),
+        }, option === "" ? ui("选项 {index}", { index: index + 1 }) : redact(option)))),
         ask.allowOther ? h("div", { class: "suggest-form" }, [
-          h("textarea", { class: "suggest-input", rows: 3, placeholder: "选项都不合适，自己写一个答案…",
+          h("textarea", { class: "suggest-input", rows: 3, placeholder: ui("选项都不合适，自己写一个答案…"),
             value: draft, disabled: busy || accepted,
             onInput: (event: Event) => {
               askDrafts.value = { ...askDrafts.value, [ask.askId]: (event.target as HTMLTextAreaElement).value };
             } }),
           h("div", { class: "suggest-actions" }, [
             h("button", { class: "control-button", disabled: busy || accepted || draft.trim() === "",
-              onClick: () => void answerAsk(ask.askId, draft.trim()) }, "用这句话回答"),
+              onClick: () => void answerAsk(ask.askId, draft.trim()) }, ui("用这句话回答")),
           ]),
         ]) : null,
         h("div", { class: "control-row" }, [
           h("button", { class: "control-button danger", disabled: busy || accepted,
-            onClick: () => void answerAsk(ask.askId, null) }, "取消这个提问"),
+            onClick: () => void answerAsk(ask.askId, null) }, ui("取消这个提问")),
         ]),
-        cancelled ? h("div", { class: "muted" }, "已取消：agent 会按自己的判断继续，终端那边的对话框也一起关掉。")
-          : accepted ? h("div", { class: "muted" }, "已交给桥接，等终端或桥接收尾…") : null,
-        askError.value?.askId === ask.askId ? h("div", { class: "control-error" }, askError.value.text) : null,
+        cancelled ? h("div", { class: "muted" }, ui("已取消：agent 会按自己的判断继续，终端那边的对话框也一起关掉。"))
+          : accepted ? h("div", { class: "muted" }, ui("已交给桥接，等终端或桥接收尾…")) : null,
+        askError.value?.askId === ask.askId ? h("div", { class: "control-error" },
+          feedbackText(askError.value, "回答失败")) : null,
       ]);
     }
 
@@ -875,9 +900,9 @@ const App = {
       const now = snapshot.at;
       const list = waitingList(snapshot); // 全部工地：混排之后每行带工地名
       const rows = (items: typeof list.recent): VNode[] => items.length === 0
-        ? [h("div", { class: "muted" }, "没有")]
+        ? [h("div", { class: "muted" }, ui("没有"))]
         : modes.value.demo
-          ? [h("div", { class: "muted" }, `${items.length} 个会话（演示模式已隐藏文字）`)]
+          ? [h("div", { class: "muted" }, ui("{count} 个会话（演示模式已隐藏文字）", { count: items.length }))]
           : items.map(item => h("div", { class: "card-row" }, [
             h("span", { class: "row-site", title: item.site }, item.site),
             h("span", { class: "row-main", title: item.text }, item.text),
@@ -887,23 +912,23 @@ const App = {
       const open = openList(snapshot);
       const backlog = backlogList(snapshot);
       const openRows = open.length === 0
-        ? [h("div", { class: "muted" }, "没有")]
+        ? [h("div", { class: "muted" }, ui("没有"))]
         : modes.value.demo
-          ? [h("div", { class: "muted" }, `${open.length} 条待定（演示模式已隐藏文字）`)]
+          ? [h("div", { class: "muted" }, ui("{count} 条待定（演示模式已隐藏文字）", { count: open.length }))]
           : open.map((item: OpenRow) => h("div", { class: "card-row" }, [
             h("span", { class: "row-site", title: item.site }, item.site),
             h("span", { class: "row-main", title: item.text }, `${item.feature} · ${item.text}`),
           ]));
       return h("div", { class: "card", "data-agent-ui": "card" }, [
-        cardHead("等你清单", () => setCard(null)),
-        h("div", { class: "lead" }, "全部工地里等你回话的会话，等得久的在前"),
-        cardSection("现在", rows(list.recent)),
-        cardSection("历史", rows(list.history)),
-        cardSection("意图卡里的待定", openRows),
-        cardSection("工地的待做", backlog.length === 0
-          ? [h("div", { class: "muted" }, "没有")]
+        cardHead(ui("等你清单"), () => setCard(null)),
+        h("div", { class: "lead" }, ui("全部工地里等你回话的会话，等得久的在前")),
+        cardSection(ui("现在"), rows(list.recent)),
+        cardSection(ui("历史"), rows(list.history)),
+        cardSection(ui("意图卡里的待定"), openRows),
+        cardSection(ui("工地的待做"), backlog.length === 0
+          ? [h("div", { class: "muted" }, ui("没有"))]
           : modes.value.demo
-            ? [h("div", { class: "muted" }, `${backlog.length} 条待做（演示模式已隐藏文字）`)]
+            ? [h("div", { class: "muted" }, ui("{count} 条待做（演示模式已隐藏文字）", { count: backlog.length }))]
             : backlog.map(item => h("div", { class: "card-row" }, [
               h("span", { class: "row-site", title: item.site }, item.site),
               h("span", { class: "row-main", title: item.text }, item.text),
@@ -915,7 +940,7 @@ const App = {
     function settingsCard(): VNode {
       const current = draft.value;
       if (current === null) return h("div", { class: "card", "data-agent-ui": "card" }, [
-        cardHead("设置", () => setCard(null)), h("div", { class: "muted" }, "设置还没读出来"),
+        cardHead(ui("设置"), () => setCard(null)), h("div", { class: "muted" }, ui("设置还没读出来")),
       ]);
       const field = (label: string, control: VNode): VNode =>
         h("label", { class: "field" }, [h("span", { class: "field-label" }, label), control]);
@@ -940,42 +965,56 @@ const App = {
           onClick: () => { draft.value = { ...current, style: value }; },
         }, label);
       return h("div", { class: "card", "data-agent-ui": "card" }, [
-        cardHead("设置", () => setCard(null)),
-        h("div", { class: "lead" }, "改完点保存，写进 settings.json 并当场生效"),
-        cardSection("外观", [
-          h("div", { class: "chips" }, [choice("theme", "night", "夜色"), choice("theme", "day", "白昼")]),
+        cardHead(ui("设置"), () => setCard(null)),
+        h("div", { class: "lead" }, ui("改完点保存，写进 settings.json 并当场生效")),
+        field(ui("语言"), h("select", {
+          class: "suggest-mode", value: current.language, "aria-label": ui("语言"),
+          onChange: (event: Event) => {
+            const language = (event.target as HTMLSelectElement).value;
+            if (language === "system" || language === "zh-CN" || language === "en") draft.value = { ...current, language };
+          },
+        }, [
+          h("option", { value: "system" }, ui("跟随系统")),
+          h("option", { value: "zh-CN" }, ui("简体中文")),
+          h("option", { value: "en" }, "English"),
+        ])),
+        cardSection(ui("外观"), [
+          h("div", { class: "chips" }, [choice("theme", "night", ui("夜色")), choice("theme", "day", ui("白昼"))]),
         ]),
-        cardSection("楼体", [field("默认造型", h("div", { class: "chips" }, [
-          styleChoice("tower", "塔楼"), styleChoice("factory", "厂房"), styleChoice("storefront", "临街店"),
+        cardSection(ui("楼体"), [field(ui("默认造型"), h("div", { class: "chips" }, [
+          styleChoice("tower", ui("塔楼")), styleChoice("factory", ui("厂房")), styleChoice("storefront", ui("临街店")),
         ]))]),
-        cardSection("启动", [field("开机自启", h("input", {
+        cardSection(ui("启动"), [field(ui("开机自启"), h("input", {
           type: "checkbox", checked: current.autostart,
           onChange: (event: Event) => { draft.value = { ...current, autostart: (event.target as HTMLInputElement).checked }; },
         }))]),
-        cardSection("阈值（分钟 / 小时）", [
-          number("idleMinutes", "空闲"), number("stalledMinutes", "停工"), number("onsiteHours", "在工地"),
+        cardSection(ui("阈值（分钟 / 小时）"), [
+          number("idleMinutes", ui("空闲")), number("stalledMinutes", ui("停工")), number("onsiteHours", ui("在工地")),
         ]),
         // 配置界面显示的是用户自己 settings.json 的原文：不脱敏（见 AGENTS.md），脱敏就没法编辑
-        cardSection('额外固定的工地（一行一个 `路径`，改名字写 `路径 = "名字"`）', [h("textarea", {
+        cardSection(ui('额外固定的工地（一行一个 `路径`，改名字写 `路径 = "名字"`）'), [h("textarea", {
           class: "suggest-input", rows: "4", value: current.repos,
           onInput: (event: Event) => { draft.value = { ...current, repos: (event.target as HTMLTextAreaElement).value }; },
         })]),
-        ...(errors.value.length === 0 ? [] : [h("div", { class: "card-error" }, errors.value.join("；"))]),
+        ...(errors.value.length === 0 ? [] : [h("div", { class: "card-error" }, errors.value.join(ui("list.separator")))]),
+        saveError.value === null ? null : h("div", { class: "card-error" }, ui("保存失败：{error}", { error: saveError.value })),
         h("div", { class: "card-actions" }, [
           h("button", {
             class: "control-button", type: "button",
             onClick: () => {
+              saveError.value = null;
               void window.agentSite.saveSettings(draftPayload(current)).then(result => {
                 errors.value = result.ok ? [] : result.errors.map(redact);
                 saved.value = result.ok;
                 if (!result.ok) return;
                 window.setTimeout(() => { saved.value = false; }, 1500);
               }).catch((error: unknown) => {
-                errors.value = [`保存失败：${error instanceof Error ? error.message : String(error)}`];
+                errors.value = [];
+                saveError.value = redact(error instanceof Error ? error.message : String(error));
                 saved.value = false;
               });
             },
-          }, saved.value ? "已保存" : "保存"),
+          }, ui(saved.value ? "已保存" : "保存")),
         ]),
       ]);
     }
@@ -985,18 +1024,20 @@ const App = {
       const data = diagnosticsView(snapshot, activeSite(snapshot));
       const problems = diagnosticsProblems(data);
       return h("div", { class: "card", "data-agent-ui": "card" }, [
-        cardHead("诊断", () => setCard(null)),
-        h("div", { class: "lead" }, "来源、坏行和最近的解析问题"),
+        cardHead(ui("诊断"), () => setCard(null)),
+        h("div", { class: "lead" }, ui("来源、坏行和最近的解析问题")),
         ...(data.repo === "" ? [] : [h("div", { class: "muted path", title: data.repo }, data.repo)]),
-        cardSection("来源", data.sources.flatMap(source => [
+        cardSection(ui("来源"), data.sources.flatMap(source => [
           h("div", { class: "card-row" }, [
-            h("span", { class: "row-main" }, `${source.harness} · ${source.present ? "在" : "不在"} · ${source.sessions} 个会话`),
-            h("span", { class: "row-meta" }, `坏行 ${source.badLines} · 未知 ${source.unknownRecords}`),
+            h("span", { class: "row-main" }, ui("{harness} · {present} · {count} 个会话", {
+              harness: source.harness, present: ui(source.present ? "在" : "不在"), count: source.sessions,
+            })),
+            h("span", { class: "row-meta" }, ui("坏行 {bad} · 未知 {unknown}", { bad: source.badLines, unknown: source.unknownRecords })),
           ]),
           h("div", { class: "muted path", title: source.root }, source.root),
         ])),
-        cardSection("解析问题", problems.length === 0
-          ? [h("div", { class: "muted" }, "没有")]
+        cardSection(ui("解析问题"), problems.length === 0
+          ? [h("div", { class: "muted" }, ui("没有"))]
           : problems.map(note => h("div", { class: "card-row" }, [h("span", null, note)]))),
       ]);
     }
@@ -1005,7 +1046,7 @@ const App = {
       return h("div", { class: "card-head" }, [
         h("h2", { title }, title),
         h("button", { class: "card-close icon-button", type: "button", "data-agent-ui": "card",
-          "aria-label": "关闭卡片", title: "关闭", onClick: close }, [icon("close")]),
+          "aria-label": ui("关闭卡片"), title: ui("关闭"), onClick: close }, [icon("close")]),
       ]);
     }
 
@@ -1036,7 +1077,7 @@ function kv(key: string, value: string): VNode {
 }
 
 function statusOf(status: "waiting" | "stalled" | "idle" | "working"): string {
-  return status === "waiting" ? "等你" : status === "stalled" ? "停工" : status === "idle" ? "空闲" : "在干";
+  return ui(status === "waiting" ? "等你" : status === "stalled" ? "停工" : status === "idle" ? "空闲" : "在干");
 }
 
 function hitRects(layout: BuildingLayout, cssWidth: number, cssHeight: number, menuOpen: boolean,

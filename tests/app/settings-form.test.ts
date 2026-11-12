@@ -8,11 +8,11 @@ it("WINDOW-27：设置面板打开时带着当前设置，保存后原样折回�
   const settings = { ...defaultSettings(), theme: "day" as const, style: "storefront" as const, autostart: true,
     thresholds: { idleMinutes: 5, stalledMinutes: 40, onsiteHours: 12 } };
   const draft = draftOf(settings);
-  expect(draft).toEqual({ theme: "day", style: "storefront", autostart: true,
+  expect(draft).toEqual({ language: "system", theme: "day", style: "storefront", autostart: true,
     idleMinutes: 5, stalledMinutes: 40, onsiteHours: 12, repos: "" });
   const parsed = fromDraft(draft);
   expect("settings" in parsed && parsed.settings).toEqual({
-    repos: [], thresholds: settings.thresholds, autostart: true, theme: "day", style: "storefront",
+    repos: [], thresholds: settings.thresholds, autostart: true, theme: "day", style: "storefront", language: "system",
   });
 });
 it("WINDOW-27：表单里的错原样说清楚，不偷偷存成默认值", () => {
@@ -33,7 +33,7 @@ it("WINDOW-27、WINDOW-30：合并时只换面板管得到的键，其余（repo
     features: [{ name: "数据层", placement: "band" as const, materials: [{ material: "brick" as const, share: 100 }], style: "storefront" as const }],
     pins: { 数据层: { feature: "数据层" } } };
   const patch = { repos: [{ path: "/work/x", name: "x" }], thresholds: { idleMinutes: 4, stalledMinutes: 30, onsiteHours: 24 },
-    autostart: false, theme: "night" as const, style: "tower" as const };
+    autostart: false, theme: "night" as const, style: "tower" as const, language: "system" as const };
   const merged = mergeSettings(settings, patch);
   expect(merged).toEqual({ ...settings, ...patch });
   expect([merged.style, merged.features]).toEqual(["tower", settings.features]);

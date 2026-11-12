@@ -1,4 +1,5 @@
 import { redact } from "../core/redact";
+import { t, type Locale } from "../core/i18n";
 import type { SiteSnapshot } from "../core/types";
 import type { BridgeAsk, BridgeSessionView } from "../main/bridge-service";
 
@@ -24,6 +25,7 @@ export interface NotifyInput {
   demo: boolean;
   dnd: boolean;
   now: number;
+  locale?: Locale;
 }
 
 /**
@@ -34,6 +36,7 @@ export interface NotifyInput {
  */
 export function planNotices(input: NotifyInput): { notices: AskNotice[]; seen: Map<string, SeenAsk> } {
   const now = input.now;
+  const locale = input.locale ?? "zh-CN";
   const present = new Set(input.asks.map(ask => ask.askId));
   const seen = new Map<string, SeenAsk>();
   for (const [askId, record] of input.seen) {
@@ -50,8 +53,8 @@ export function planNotices(input: NotifyInput): { notices: AskNotice[]; seen: M
     if (known || input.focused || input.dnd) continue;
     notices.push({
       askId: ask.askId,
-      title: `等你回答 · ${siteOf.get(ask.sessionKey) ?? "工地"}`,
-      body: input.demo ? DEMO_BODY : clip(redact(ask.question)),
+      title: t(locale, "等你回答 · {site}", { site: siteOf.get(ask.sessionKey) ?? t(locale, "工地") }),
+      body: input.demo ? t(locale, DEMO_BODY) : clip(redact(ask.question)),
     });
   }
   return { notices, seen };
@@ -79,15 +82,16 @@ export interface AlertInput {
   focused: boolean;
   demo: boolean;
   dnd: boolean;
+  locale?: Locale;
 }
 
-const ALERT_TITLE: Record<AlertKind, string> = { waiting: "等你", stalled: "停住了", "offline-paused": "断线" };
+const ALERT_TITLE = { waiting: "等你", stalled: "停住了", "offline-paused": "断线" } as const;
 
-const ALERT_BODY: Record<AlertKind, string> = {
+const ALERT_BODY = {
   waiting: "在等你",
   stalled: "中途断掉了",
   "offline-paused": "暂停中的会话掉线了",
-};
+} as const;
 
 /**
  * 纯函数：算出这一轮该弹哪些状态提醒，以及下一轮的"已经在提醒"集合。
@@ -95,16 +99,18 @@ const ALERT_BODY: Record<AlertKind, string> = {
  * 有悬着决策的会话不算"等你"——那条提问自己会弹通知。
  */
 export function planAlerts(input: AlertInput): { alerts: Alert[]; active: Set<string>; paused: Set<string> } {
+  const locale = input.locale ?? "zh-CN";
   const live = new Set<string>();
   const alerts: Alert[] = [];
   const asked = new Set(input.asks.map(ask => ask.sessionKey));
   const siteOf = new Map<string, string>();
   for (const site of input.snapshot.sites) for (const worker of site.workers) siteOf.set(worker.key, site.name);
-  const add = (sessionKey: string, kind: AlertKind, bubble = ALERT_BODY[kind]): void => {
+  const add = (sessionKey: string, kind: AlertKind, bubble?: string): void => {
     const key = `${sessionKey}:${kind}`;
     live.add(key);
     if (input.active.has(key) || input.focused || input.dnd) return;
-    alerts.push({ key, title: `${ALERT_TITLE[kind]} · ${siteOf.get(sessionKey) ?? "工地"}`, body: input.demo ? DEMO_BODY : clip(redact(bubble)) });
+    alerts.push({ key, title: `${t(locale, ALERT_TITLE[kind])} · ${siteOf.get(sessionKey) ?? t(locale, "工地")}`,
+      body: input.demo ? t(locale, DEMO_BODY) : clip(redact(bubble ?? t(locale, ALERT_BODY[kind]))) });
   };
   for (const site of input.snapshot.sites) {
     for (const worker of site.workers) {

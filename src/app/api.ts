@@ -1,11 +1,12 @@
 import type { SiteSnapshot } from "../core/types";
+import type { Locale, MessageKey } from "../core/i18n";
 import type { AppModes, ModeAction } from "./modes";
 import type { ThemeName } from "./theme";
 import type { SettingsDraft } from "./settings-form";
 import type { AppScale } from "./window";
 
 export interface AppWorkArea { x: number; y: number; width: number; height: number }
-export interface AppView { scale: AppScale; workArea: AppWorkArea; windowHeight: number; theme: ThemeName }
+export interface AppView { scale: AppScale; workArea: AppWorkArea; windowHeight: number; theme: ThemeName; locale: Locale }
 export interface AppRect { x: number; y: number; width: number; height: number }
 export interface AppAsk {
   askId: string;
@@ -16,7 +17,7 @@ export interface AppAsk {
   allowOther: boolean;
   context?: string;
 }
-export interface AskResult { accepted: boolean; reason?: string }
+export interface AskResult { accepted: boolean; reason?: string; messageKey?: MessageKey }
 export type SaveSettingsResult = { ok: true } | { ok: false; errors: string[] };
 
 export interface AppBootstrap extends AppView { snapshot: SiteSnapshot; modes: AppModes; hovered: boolean; asks: AppAsk[];
@@ -28,7 +29,7 @@ export type MenuAction = "toggle" | "attach-right" | "primary" | "cursor" | "the
   | ModeAction | "diagnostics" | "follow-site" | "pin-site";
 export type ControlAction = "pause" | "resume" | "abort";
 export type SuggestMode = "steer" | "followUp";
-export interface ControlResult { ok: boolean; error?: string }
+export interface ControlResult { ok: boolean; error?: string; messageKey?: MessageKey }
 
 export interface AgentSiteApi {
   bootstrap(): Promise<AppBootstrap>;

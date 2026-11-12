@@ -3,6 +3,7 @@ import { activeSite } from "../core/site";
 import { BAND_WIDTH, BAND_X, BUBBLE_WIDTH, FLOOR_GUTTER, FOOTER_HEIGHT, GROUND_HEIGHT, LOGICAL_WIDTH, TOP_PAD } from "./constants";
 import { layoutFooter, workerTone, type FooterLayout } from "./footer";
 import type { Tone } from "./theme";
+import { t, type Locale } from "../core/i18n";
 
 export interface Rect { x: number; y: number; width: number; height: number }
 export interface LayoutMaterial { material: Material; x: number; width: number }
@@ -87,11 +88,12 @@ const MINI_MAX_SHARE = 0.25;
 const FLOOR_REFERENCE = 10;
 
 /** 纯布局：不碰 DOM，供渲染和测试共用 */
-export function layoutBuilding(snapshot: SiteSnapshot, height: number, stableX?: ReadonlyMap<string, number>): BuildingLayout {
+export function layoutBuilding(snapshot: SiteSnapshot, height: number, stableX?: ReadonlyMap<string, number>, locale: Locale = "zh-CN",
+  measureCaption?: (text: string) => number): BuildingLayout {
   const bottom = height - FOOTER_HEIGHT - GROUND_HEIGHT;
   const usable = bottom - TOP_PAD;
   const site = activeSite(snapshot);
-  if (site === null) return emptyLayout(height);
+  if (site === null) return emptyLayout(height, locale);
   const counts = site.bands.map(band => Math.max(1, band.plan?.floors.length ?? 1));
   const total = counts.reduce((sum, n) => sum + n, 0);
   // 层高固定成"十层刚好铺满"的高度：楼层增减时楼往上长，不重算每层高度（否则整栋楼跟着快照呼吸）；
@@ -121,7 +123,7 @@ export function layoutBuilding(snapshot: SiteSnapshot, height: number, stableX?:
       .map(floor => ({ x: BAND_X, y: floor.y, width: BAND_WIDTH, height: floor.height }));
     bands.push({ feature: band.feature, placement: band.placement, style: band.style, stage: band.stage,
       ribbon: band.ribbon, x: BAND_X, y, width: BAND_WIDTH,
-      height: bandHeight, materials, floors, scaffold, tarp: band.tarp });
+      height: bandHeight, materials, floors, scaffold, tarp: band.tarp === null ? null : t(locale, band.tarp) });
   });
 
   const crownBand = site.bands.find(band => band.placement === "crown");
@@ -136,14 +138,14 @@ export function layoutBuilding(snapshot: SiteSnapshot, height: number, stableX?:
   const ground = { x: 0, y: bottom, width: LOGICAL_WIDTH, height: GROUND_HEIGHT };
   const officeEntry = site.office[0];
   const office = officeEntry === undefined ? null : {
-    x: 2, y: bottom - 8, width: 12, height: 8, label: "办公室", style: officeEntry.style, stage: officeEntry.stage,
+    x: 2, y: bottom - 8, width: 12, height: 8, label: t(locale, "办公室"), style: officeEntry.style, stage: officeEntry.stage,
   };
   const designer = { x: 22, y: bottom - 12, width: 8, height: 12 };
   const placed = placeWorkers(site.workers, bands, bottom, stableX);
   const workers = placed.map(item => item.worker);
-  const bubbles = placeBubbles(placed, bands, bottom);
+  const bubbles = placeBubbles(placed, bands, bottom, measureCaption);
   // 灯跨工地混排：别的工地有人在等你，底栏也能看见
-  const footer = layoutFooter(snapshot.sites.flatMap(item => item.workers.map(worker => ({ worker, site: item.key }))), height);
+  const footer = layoutFooter(snapshot.sites.flatMap(item => item.workers.map(worker => ({ worker, site: item.key }))), height, locale);
   const hitRects = [...bands.map(band => ({ x: band.x, y: band.y, width: band.width, height: band.height })),
     ...(crown === null ? [] : [crown]), ...(office === null ? [] : [office]), designer,
     ...workers, ...bubbles, ...footer.lights];
@@ -151,12 +153,12 @@ export function layoutBuilding(snapshot: SiteSnapshot, height: number, stableX?:
 }
 
 /** 没有任何工地时的空布局：只有地面、设计师和底栏 */
-function emptyLayout(height: number): BuildingLayout {
+function emptyLayout(height: number, locale: Locale): BuildingLayout {
   const bottom = height - FOOTER_HEIGHT - GROUND_HEIGHT;
   const ground = { x: 0, y: bottom, width: LOGICAL_WIDTH, height: GROUND_HEIGHT };
   const designer = { x: 22, y: bottom - 12, width: 8, height: 12 };
   return { width: LOGICAL_WIDTH, height, floorHeight: 0, bands: [], crown: null, ground, office: null, designer,
-    workers: [], bubbles: [], footer: layoutFooter([], height), siteKey: null, hitRects: [designer] };
+    workers: [], bubbles: [], footer: layoutFooter([], height, locale), siteKey: null, hitRects: [designer] };
 }
 
 interface PlacedWorker {
@@ -241,14 +243,15 @@ const decorate = (worker: Worker): Omit<LayoutWorker, "x" | "y" | "width" | "hei
     spot: worker.location.kind === "band" ? `${worker.location.feature}\u0000${worker.location.floor}` : null });
 
 /** 气泡从下往上排；优先放在工人上一层，冲突时就近换层或上下错开，且不碰当前切片的楼层 */
-function placeBubbles(placed: readonly PlacedWorker[], bands: readonly LayoutBand[], bottom: number): LayoutBubble[] {
+function placeBubbles(placed: readonly PlacedWorker[], bands: readonly LayoutBand[], bottom: number,
+  measureCaption?: (text: string) => number): LayoutBubble[] {
   const bubbles: LayoutBubble[] = [];
   const floors = bands.flatMap(band => band.floors);
   const blocked = floors.filter(floor => floor.kind === "progress");
   const ordered = [...placed].sort((a, b) => b.bubbleBottom - a.bubbleBottom);
   for (const item of ordered) {
     if (!ALWAYS_VISIBLE.has(item.worker.tone)) continue;
-    const lines = bubbleLines(item.text);
+    const lines = measureCaption === undefined ? bubbleLines(item.text) : bubbleLinesByWidth(item.text, measureCaption);
     if (lines.length === 0) continue;
     const width = BUBBLE_WIDTH;
     const height = lines.length * BUBBLE_LINE_HEIGHT + BUBBLE_PADDING;
@@ -282,6 +285,30 @@ const unique = (values: readonly number[]): number[] => [...new Set(values)];
 const overlapArea = (a: Rect, b: Rect): number =>
   Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x))
   * Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+
+/** 按调用方提供的真实字宽折行；不读 DOM，保留既有字号和两行上限。 */
+export function bubbleLinesByWidth(text: string, measure: (value: string) => number, maxWidth = BUBBLE_WIDTH - 10): string[] {
+  let rest = Array.from(text.replace(/\s+/g, " ").trim());
+  const lines: string[] = [];
+  while (rest.length > 0 && lines.length < 2) {
+    if (measure(rest.join("")) <= maxWidth) { lines.push(rest.join("")); return lines; }
+    let fit = 0;
+    while (fit < rest.length && measure(rest.slice(0, fit + 1).join("")) <= maxWidth) fit++;
+    if (lines.length === 1) {
+      while (fit > 0 && measure(`${rest.slice(0, fit).join("").trimEnd()}…`) > maxWidth) fit--;
+      lines.push(`${rest.slice(0, fit).join("").trimEnd()}…`);
+      return lines;
+    }
+    let cut = Math.max(1, fit);
+    for (let i = cut; i > 0; i--) {
+      if (rest[i] === " ") { cut = i; break; }
+    }
+    lines.push(rest.slice(0, cut).join("").trimEnd());
+    rest = rest.slice(cut);
+    while (rest[0] === " ") rest.shift();
+  }
+  return lines;
+}
 
 /** 按字符折行，尽量在空格处断开；两行放不下时第二行以省略号收尾 */
 export function bubbleLines(text: string, perLine = BUBBLE_CHARS): string[] {

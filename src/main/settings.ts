@@ -2,12 +2,13 @@ import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { bridgeFilePath } from "../bridge/link";
 import { DEFAULT_THRESHOLDS } from "../core/status";
+import { resolveLocale, t, type LanguageSetting, type Locale } from "../core/i18n";
 import type { FeatureConfig, Pin, SiteConfig, Thresholds } from "../core/types";
 import { isNonEmpty, isNum, isObj, isStr, oneOf, parseJsonObject } from "../protocol/guards";
 
 export interface RepoEntry { path: string; name: string }
 export type ThemeSetting = "night" | "day";
-export interface Settings extends SiteConfig { repos: RepoEntry[]; autostart: boolean; theme: ThemeSetting }
+export interface Settings extends SiteConfig { repos: RepoEntry[]; autostart: boolean; theme: ThemeSetting; language: LanguageSetting }
 
 /** 默认不预设任何工地和功能名：工地从会话里自动发现，顺序和材质按 specs 里实际有的来 */
 export const DEFAULT_FEATURES: FeatureConfig[] = [];
@@ -24,23 +25,25 @@ export function defaultSettings(): Settings {
     pins: {},
     autostart: false,
     theme: "night",
+    language: "system",
   };
 }
 
-export function loadSettings(dir: string): { settings: Settings; diagnostics: string[] } {
+export function loadSettings(dir: string, systemLocale = "zh-CN"): { settings: Settings; diagnostics: string[] } {
   const defaults = defaultSettings();
+  const fallbackLocale = resolveLocale(defaults.language, systemLocale);
   let raw: string;
   try {
     raw = readFileSync(path.join(dir, "settings.json"), "utf8");
   } catch (error) {
-    return { settings: defaults, diagnostics: (error as NodeJS.ErrnoException).code === "ENOENT" ? [] : ["settings.json 读不出，已用默认配置"] };
+    return { settings: defaults, diagnostics: (error as NodeJS.ErrnoException).code === "ENOENT" ? [] : [t(fallbackLocale, "settings.json 读不出，已用默认配置")] };
   }
   const input = parseJsonObject(raw);
-  if (input === null) return { settings: defaults, diagnostics: ["settings.json 读不出，已用默认配置"] };
-  const validators = { repos: isRepos, thresholds: isThresholds, features: isFeatures, pins: isPins, autostart: isBool, theme: isTheme, style: isStyle };
+  if (input === null) return { settings: defaults, diagnostics: [t(fallbackLocale, "settings.json 读不出，已用默认配置")] };
+  const validators = { repos: isRepos, thresholds: isThresholds, features: isFeatures, pins: isPins, autostart: isBool, theme: isTheme, style: isStyle, language: isLanguage };
   for (const key of Object.keys(validators) as (keyof typeof validators)[]) {
     if (Object.hasOwn(input, key) && !validators[key](input[key])) {
-      return { settings: defaults, diagnostics: [`settings.json 的 ${key} 无效，已用默认配置`] };
+      return { settings: defaults, diagnostics: [t(fallbackLocale, "settings.json 的 {key} 无效，已用默认配置", { key })] };
     }
   }
   const repos = isRepos(input.repos) ? input.repos.map(repo => ({ ...repo, path: canonicalRepo(repo.path) })) : defaults.repos;
@@ -52,9 +55,10 @@ export function loadSettings(dir: string): { settings: Settings; diagnostics: st
     pins: isPins(input.pins) ? input.pins : defaults.pins,
     autostart: isBool(input.autostart) ? input.autostart : defaults.autostart,
     theme: isTheme(input.theme) ? input.theme : defaults.theme,
+    language: isLanguage(input.language) ? input.language : defaults.language,
   };
   const diagnostics = Object.hasOwn(input, "extraPathRules")
-    ? ["settings.json 里的 extraPathRules 已不再使用：工地按会话的工作目录自动认定"] : [];
+    ? [t(resolveLocale(settings.language, systemLocale), "settings.json 里的 extraPathRules 已不再使用：工地按会话的工作目录自动认定")] : [];
   return { settings, diagnostics };
 }
 
@@ -68,6 +72,7 @@ export function writeSettings(dir: string, settings: Settings): void {
     pins: settings.pins,
     autostart: settings.autostart,
     theme: settings.theme,
+    language: settings.language,
   };
   writeFileSync(path.join(dir, "settings.json"), `${JSON.stringify(ordered, null, 2)}
 `, "utf8");
@@ -80,11 +85,11 @@ const material = oneOf(["brick", "glass", "metal", "concrete"] as const);
 const isStyle = oneOf(["tower", "factory", "storefront"] as const);
 const isRepos = (v: unknown): v is RepoEntry[] => Array.isArray(v) && v.every(r => isObj(r) && absolute(r.path) && isStr(r.name));
 /** 停工的判据是"静得比空闲更久"，所以两条阈值的大小关系属于配置本身；读写共用这一条，别各判各的 */
-export function thresholdsProblem(value: Record<string, unknown>): string | null {
-  if (!positive(value.idleMinutes)) return "空闲分钟要是大于 0 的数字";
-  if (!positive(value.stalledMinutes)) return "停工分钟要是大于 0 的数字";
-  if (!positive(value.onsiteHours)) return "在工地小时要是大于 0 的数字";
-  if (value.stalledMinutes <= value.idleMinutes) return "停工分钟要大于空闲分钟";
+export function thresholdsProblem(value: Record<string, unknown>, locale: Locale = "zh-CN"): string | null {
+  if (!positive(value.idleMinutes)) return t(locale, "空闲分钟要是大于 0 的数字");
+  if (!positive(value.stalledMinutes)) return t(locale, "停工分钟要是大于 0 的数字");
+  if (!positive(value.onsiteHours)) return t(locale, "在工地小时要是大于 0 的数字");
+  if (value.stalledMinutes <= value.idleMinutes) return t(locale, "停工分钟要大于空闲分钟");
   return null;
 }
 
@@ -98,6 +103,7 @@ const isFeatures = (v: unknown): v is FeatureConfig[] => Array.isArray(v) && v.e
 const isPins = (v: unknown): v is Record<string, Pin> => isObj(v) && Object.values(v).every(p => isObj(p) && isStr(p.feature) && (!Object.hasOwn(p, "floor") || isNonEmpty(p.floor)));
 const isBool = (v: unknown): v is boolean => typeof v === "boolean";
 const isTheme = oneOf(["night", "day"] as const);
+const isLanguage = oneOf(["system", "zh-CN", "en"] as const);
 function canonicalRepo(repo: string): string {
   try { return realpathSync.native(repo); } catch { return path.resolve(repo); }
 }

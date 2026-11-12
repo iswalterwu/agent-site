@@ -131,6 +131,12 @@ App → 桥接：
 - `contextIsolation` 开、`nodeIntegration` 关、`sandbox` 开；CSP 只允许本地资源。
 - 窗口的透明边缘和空白区用 `setIgnoreMouseEvents(true, { forward: true })`；渲染层上报楼体 / 气泡 / 灯 / 卡片 / 顶栏 / 齿轮 / 底栏的 CSS 命中矩形，主进程轮询光标并切换是否接收鼠标。光标和窗口内容边界都取 DIP，同一坐标系比较。
 
+## 界面语言
+
+- `src/core/i18n.ts` 解析语言选择并格式化静态词条；词条按核心展示、界面、服务放在 `src/core/locales/` 的三个纯数据模块中。参数只插入原文，不再扫描或翻译参数内容；核心动作、状态和轨迹显式接收 `locale`，不读取系统或全局语言。
+- 主进程用 Electron 的系统语言解析 `settings.language`；只把选择值写回文件，解析后的 `locale` 走 `AppView` / bootstrap / view 更新。主进程和渲染进程各有自己的 `src/app/i18n.ts` 展示语言，菜单、卡片和绘制按进程内语言取词；窗口与楼体布局显式接收语言，气泡字宽由渲染层以绘制所用字体和字号测量后注入，布局仍是纯函数。控制与回答的可本地化程序错误在 App 内 IPC 中附带 `messageKey`，界面缓存标识并按当前语言取词；外部桥接错误不附加标识，只保留脱敏原文。
+- 只换语言时，`SiteEngine.setLocale` 使用现有跟随器和会话缓存重新组装快照，不重开引擎，避免丢失不能靠头尾重读恢复的中段信息。有效设置保存后清理已解决的启动设置诊断；桥接在线态和未发送的界面草稿不重建。语言行为和英文素材见 WINDOW-32 至 WINDOW-35。
+
 ## 楼段造型与施工阶段
 
 - 类型：`BuildingStyle = "tower" | "factory" | "storefront"`、`BuildStage = "empty" | "foundation" | "structure" | "done"` 在 `src/core/types.ts`；`Band` 和 `LayoutBand` 带 `style` / `stage`，`SiteView.office` 的每一项、`LayoutCrown`、`LayoutOffice` 也带。`draw.ts` 只读布局，不读配置。
@@ -146,7 +152,7 @@ App 数据目录 `%APPDATA%\agent-site\`：
 
 | 文件 | 内容 |
 |---|---|
-| `settings.json` | 可选：额外固定的工地（路径、显示名，不填就全靠发现）、开机自启（见 WINDOW-24）、配色 `night` / `day`（见 WINDOW-26）、窗内设置面板写回同一个文件（见 WINDOW-27）、阈值（空闲 10 分钟、中途断掉 30 分钟、上工地时限 24 小时、断线放行 60 秒）、勿扰 / 演示模式与窗口模式（托盘里切，不落盘）、feature 配置（顺序、材质、placement，默认空）、楼段默认造型 `tower` / `factory` / `storefront`（WINDOW-30，`features[].style` 可覆盖，面板可改顶层）、按会话 ID 的归属钉住。默认值里没有任何项目名 |
+| `settings.json` | 可选：额外固定的工地（路径、显示名，不填就全靠发现）、开机自启（见 WINDOW-24）、语言选择（见 WINDOW-32）、配色 `night` / `day`（见 WINDOW-26）、窗内设置面板写回同一个文件（见 WINDOW-27）、阈值（空闲 10 分钟、中途断掉 30 分钟、上工地时限 24 小时、断线放行 60 秒）、勿扰 / 演示模式与窗口模式（托盘里切，不落盘）、feature 配置（顺序、材质、placement，默认空）、楼段默认造型 `tower` / `factory` / `storefront`（WINDOW-30，`features[].style` 可覆盖，面板可改顶层）、按会话 ID 的归属钉住。默认值里没有任何项目名 |
 | `bridge.json` | 运行时连接信息（见「桥接协议 v2」） |
 | `commands.jsonl` | 指令台账 |
 | `logs/` | App 自己的诊断日志（滚动） |

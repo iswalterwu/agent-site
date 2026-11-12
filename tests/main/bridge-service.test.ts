@@ -145,7 +145,7 @@ describe("BridgeService", () => {
     try {
       await waitFor(() => service.sessions().some(item => item.key === "pi:s3"));
       expect(service.sessions().find(item => item.key === "pi:s3")!.controllable).toBe(false);
-      expect(await service.command("pi:s3", { type: "pause" })).toEqual({ ok: false, error: "只读会话不能控制" });
+      expect(await service.command("pi:s3", { type: "pause" })).toEqual({ ok: false, error: "只读会话不能控制", messageKey: "只读会话不能控制" });
     } finally { ws.close(); }
   });
 
@@ -175,13 +175,13 @@ describe("BridgeService", () => {
     setAutoAck(false);
     const started = Date.now();
     const timedOut = await service.command("pi:s1", { type: "pause" });
-    expect(timedOut).toEqual({ ok: false, error: "桥接没有回执，稍后再试" });
+    expect(timedOut).toEqual({ ok: false, error: "桥接没有回执，稍后再试", messageKey: "桥接没有回执，稍后再试" });
     expect(Date.now() - started).toBeGreaterThanOrEqual(150);
 
     setAutoAck(false);
     const pending = service.command("pi:s1", { type: "abort" });
     link.stop("test");
-    await expect(pending).resolves.toEqual({ ok: false, error: "连接已断开" });
+    await expect(pending).resolves.toEqual({ ok: false, error: "连接已断开", messageKey: "连接已断开" });
   });
 
   it("坏协议不欢迎：协议 1 的 hello、或 auth 的证明不对，都直接断开", async () => {
@@ -229,7 +229,7 @@ describe("BridgeService", () => {
     expect(service.asks()).toHaveLength(1);
     link.resolved("ask-1", "site");
     await waitFor(() => service.asks().length === 0);
-    expect(service.answer("ask-1", "乙")).toEqual({ accepted: false, reason: "这个决策已经结束" });
+    expect(service.answer("ask-1", "乙")).toEqual({ accepted: false, reason: "这个决策已经结束", messageKey: "这个决策已经结束" });
   });
 
   it("设计师点取消：走完整条链路，模型拿到跳过说明，App 收到 by: cancelled 并移除决策", async () => {
@@ -247,7 +247,7 @@ describe("BridgeService", () => {
     link.resolved("ask-terminal", "terminal");
     await waitFor(() => service.asks().length === 0);
     await expect(terminal).resolves.toEqual({ kind: "none" });
-    expect(service.answer("ask-terminal", "A")).toEqual({ accepted: false, reason: "这个决策已经结束" });
+    expect(service.answer("ask-terminal", "A")).toEqual({ accepted: false, reason: "这个决策已经结束", messageKey: "这个决策已经结束" });
   });
 
   it("三级会话的 ask 立即取消（带 auto），不进入决策卡；模型不会被说成'设计师跳过'", async () => {
@@ -365,7 +365,7 @@ describe("BridgeService", () => {
     const { service, link, file } = await open();
     link.stop("x".repeat(500));
     await waitFor(() => service.sessions().length === 0);
-    expect(await service.command("pi:s1", { type: "pause" })).toEqual({ ok: false, error: "会话不在线" });
+    expect(await service.command("pi:s1", { type: "pause" })).toEqual({ ok: false, error: "会话不在线", messageKey: "会话不在线" });
     service.stop();
     expect(existsSync(file)).toBe(false);
   });

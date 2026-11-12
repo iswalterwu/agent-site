@@ -2,6 +2,7 @@ import type { AppView } from "./api";
 import type { AppScale, WorkArea, WindowBounds } from "./window";
 import { windowBounds } from "./window";
 import type { ThemeName } from "./theme";
+import type { Locale } from "../core/i18n";
 
 export interface DisplayInfo { id: number; workArea: WorkArea; scaleFactor: number }
 export interface DisplayView { view: AppView; bounds: WindowBounds }
@@ -10,9 +11,9 @@ export interface DisplayView { view: AppView; bounds: WindowBounds }
  * 单台显示器的工作区，并算出贴右缘的窗口位置。
  * Electron 的 display.bounds / workArea 已经是 DIP（4K 150% 的屏报 2560 宽），不要再按 scaleFactor 除一次。
  */
-export function displayView(display: DisplayInfo, scale: AppScale, theme: ThemeName): DisplayView {
+export function displayView(display: DisplayInfo, scale: AppScale, theme: ThemeName, locale: Locale = "zh-CN"): DisplayView {
   const bounds = windowBounds(display.workArea, scale);
-  return { view: { scale, workArea: display.workArea, windowHeight: bounds.height, theme }, bounds };
+  return { view: { scale, workArea: display.workArea, windowHeight: bounds.height, theme, locale }, bounds };
 }
 
 /** 附着到右侧屏幕：优先选当前屏右边最近的那块；没有右侧屏时选最右的屏。 */

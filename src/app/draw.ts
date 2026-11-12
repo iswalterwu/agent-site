@@ -4,6 +4,7 @@ import { ribbonSegments } from "./collapse";
 import { FLOOR_GUTTER, FOOTER_HEIGHT } from "./constants";
 import type { BuildingLayout, LayoutBand, LayoutBubble, LayoutCell, LayoutCrown, LayoutFloor, LayoutMaterial, LayoutOffice, LayoutWorker, Rect } from "./layout";
 import { RIBBON_TONE } from "./footer";
+import { ui } from "./i18n";
 import { COLOR, FONT_SANS, GARDEN, PLATE, STYLE, TONE, TYPE } from "./theme";
 
 /**
@@ -36,6 +37,9 @@ export function drawBuilding(ctx: CanvasRenderingContext2D, layout: BuildingLayo
   ctx.lineWidth = 1;
   drawFooterSurface(ctx, layout);
   drawGround(ctx, layout.ground);
+  if (layout.bands.length === 0 && layout.office === null) {
+    text(ctx, ui("无图纸"), layout.width / 2, layout.ground.y - 20, TYPE.label, COLOR.muted, "center");
+  }
   const lit = litFloors(layout);
   // 塔吊是工地级设备：全楼只有一台，立在最高的主体阶段楼段上
   const craneBand = layout.bands.findLast(band => band.placement === "band" && band.stage === "structure");
@@ -847,6 +851,7 @@ function drawDesigner(ctx: CanvasRenderingContext2D, designer: Rect): void {
     [6, 6, 3, 1, COLOR.paper],
     [8, 5, 1, 1, COLOR.paper],
   ]);
+  text(ctx, ui("设计师"), b.x, b.y + b.h + 6, TYPE.caption, COLOR.muted);
 }
 
 /** 小人：帽色分角色，只读来源脚边一个空心圈；状态用姿体和小标记表达 */
@@ -928,8 +933,13 @@ function drawBubbles(ctx: CanvasRenderingContext2D, bubbles: readonly LayoutBubb
     fill(ctx, b.x, b.y, b.w, b.h, PLATE.solid);
     fill(ctx, b.x, b.y, 2, b.h, TONE[bubble.tone]);
     frame(ctx, b, withAlpha(TONE[bubble.tone], .55));
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(b.x + 4, b.y + 1, b.w - 8, b.h - 2);
+    ctx.clip();
     bubble.lines.forEach((line, index) =>
       text(ctx, line, b.x + 5, b.y + 4 + index * 7 + 4, TYPE.caption, PLATE.text));
+    ctx.restore();
   }
 }
 

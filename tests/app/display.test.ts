@@ -8,7 +8,7 @@ const external = { id: 2, workArea: { x: 1920, y: 0, width: 2560, height: 1392 }
 describe("显示器与窗口", () => {
   it("主屏 1920×1040 时窗口贴右缘并垂直居中", () => {
     const { view, bounds } = displayView(laptop, 2, "night");
-    expect(view).toEqual({ scale: 2, workArea: { x: 0, y: 0, width: 1920, height: 1040 }, windowHeight: 720, theme: "night" });
+    expect(view).toEqual({ scale: 2, workArea: { x: 0, y: 0, width: 1920, height: 1040 }, windowHeight: 720, theme: "night", locale: "zh-CN" });
     expect(bounds).toEqual({ x: 1400, y: 160, width: 520, height: 720 });
   });
 

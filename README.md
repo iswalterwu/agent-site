@@ -22,7 +22,7 @@ This isn't an agent launcher or scheduler. Keep using your terminal. Agent-site 
 
 ## Quick start
 
-Currently developed and tested primarily on **Windows 11**. The UI is in Chinese, and there is no packaged installer yet.
+Currently developed and tested primarily on **Windows 11**, with **English and Simplified Chinese** interfaces. There is no packaged installer yet.
 
 Requires **Node.js ≥ 22.19** and **Git ≥ 2.31**. Clone the repository, then run:
 
@@ -76,7 +76,7 @@ The app reads local session logs and project plans without changing project file
 
 Common secret patterns are masked in displayed text. Still review project names, paths, and conversation content before sharing screenshots.
 
-Settings live in `%APPDATA%\agent-site\settings.json`, or in `AGENT_SITE_HOME` when set. Use the gear menu to change the theme, building style, startup behavior, and other settings.
+Settings live in `%APPDATA%\agent-site\settings.json`, or in `AGENT_SITE_HOME` when set. In Settings, choose **System**, **Chinese**, or **English** and save to switch immediately. The default follows your system language (Chinese for `zh`, English otherwise). Project names and session content stay in their original language. The gear menu also controls the theme, building style, and startup behavior.
 
 ## Development
 

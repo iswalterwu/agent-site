@@ -2,6 +2,7 @@
 // 规则见计划 Task 6，重叠处按 P8、P9 的顺序判；E18–E20 定了测试的成败、shell 只看真正执行的部分、返工时间窗何时关。
 // 文字一律经 bubble（先脱敏再截断，E1）。
 
+import { t, type Locale } from "./i18n";
 import { ownerIndex } from "./session";
 import { baseName, bubble, firstSentence } from "./text";
 import type { ActionKind, ActionView, SessionState, SiteEvent, TodoItem, ToolCall } from "./types";
@@ -57,11 +58,11 @@ export function commitTitle(command: string): string | null {
 }
 
 /** 会话里的全部动作，旧 → 新；先把结果配给调用（与 applyEvents 同一条规则） */
-export function deriveActions(s: SessionState): ActionView[] {
+export function deriveActions(s: SessionState, locale: Locale = "zh-CN"): ActionView[] {
   const w: Walk = { pairs: pairResults(s.events) };
   const actions: ActionView[] = [];
   s.events.forEach((ev, i) => {
-    const action = actionOf(ev, i, w);
+    const action = actionOf(ev, i, w, locale);
     if (action !== null) actions.push(action);
   });
   return actions;
@@ -79,13 +80,13 @@ interface Pairs { resultOf: Map<number, ToolResultEvent>; callOf: Map<number, To
 interface Walk { readonly pairs: Pairs; model?: string; lastTestFailAt?: number }
 
 /** 一条事件出的动作；提示、回合结束、工具结果和空的思考不出动作 */
-function actionOf(ev: SiteEvent, i: number, w: Walk): ActionView | null {
+function actionOf(ev: SiteEvent, i: number, w: Walk, locale: Locale): ActionView | null {
   switch (ev.kind) {
     case "thinking": case "text": return thinkAction(ev.text, ev.ts);
-    case "model": return modelAction(ev.model, ev.ts, w);
-    case "compaction": return { kind: "compact", at: ev.ts, text: bubble("压缩上下文") };
-    case "api_error": return { kind: "api_error", at: ev.ts, text: bubble(ev.rateLimited ? "限流，等待中" : "API 报错") };
-    case "tool_call": return callAction(ev, w.pairs.resultOf.get(i), w);
+    case "model": return modelAction(ev.model, ev.ts, w, locale);
+    case "compaction": return { kind: "compact", at: ev.ts, text: bubble(t(locale, "压缩上下文")) };
+    case "api_error": return { kind: "api_error", at: ev.ts, text: bubble(t(locale, ev.rateLimited ? "限流，等待中" : "API 报错")) };
+    case "tool_call": return callAction(ev, w.pairs.resultOf.get(i), w, locale);
     case "tool_result": noteTestResult(ev, w.pairs.callOf.get(i), w); return null;
     default: return null;
   }
@@ -113,10 +114,10 @@ function thinkAction(text: string, at: number): ActionView | null {
 }
 
 /** 第一个模型只作基准；之后和上一个模型不同才算换模型 */
-function modelAction(model: string, at: number, w: Walk): ActionView | null {
+function modelAction(model: string, at: number, w: Walk, locale: Locale): ActionView | null {
   const prev = w.model;
   w.model = model;
-  return prev === undefined || prev === model ? null : { kind: "model", at, text: bubble(`换到 ${model}`) };
+  return prev === undefined || prev === model ? null : { kind: "model", at, text: bubble(t(locale, "换到 {model}", { model })) };
 }
 
 /** 测试调用的结果：失败记下时间，通过就关掉返工时间窗（E20）；别的调用的结果不管 */
@@ -131,8 +132,8 @@ const isTestCall = (call: ToolCall): boolean => call.op === "shell" && testWord(
 const testFailed = (r: ToolResultEvent): boolean => !r.ok || (r.failed ?? 0) > 0;
 
 /** 工具调用出的动作都带 outcome：没有结果时 pending；测试按 E18 判成败，别的调用只看 ok */
-function callAction(ev: ToolCallEvent, result: ToolResultEvent | undefined, w: Walk): ActionView {
-  const { kind, text } = classify(ev.call, ev.ts, result, w);
+function callAction(ev: ToolCallEvent, result: ToolResultEvent | undefined, w: Walk, locale: Locale): ActionView {
+  const { kind, text } = classify(ev.call, ev.ts, result, w, locale);
   const failed = result === undefined ? undefined : kind === "test" ? testFailed(result) : !result.ok;
   return { kind, at: ev.ts, text: bubble(text), outcome: failed === undefined ? "pending" : failed ? "fail" : "ok" };
 }
@@ -141,33 +142,33 @@ function callAction(ev: ToolCallEvent, result: ToolResultEvent | undefined, w: W
 
 interface Classified { kind: ActionKind; text: string }
 
-function classify(call: ToolCall, at: number, result: ToolResultEvent | undefined, w: Walk): Classified {
+function classify(call: ToolCall, at: number, result: ToolResultEvent | undefined, w: Walk, locale: Locale): Classified {
   switch (call.op) {
-    case "todo": return { kind: "plan", text: currentTodo(call.todos ?? []) };
-    case "edit": case "write": return editAction(call, at, w);
-    case "read": case "search": return { kind: "read", text: `看 ${fileName(call)}` };
-    case "shell": return shellAction((call.command ?? "").trim(), call.tool, result);
-    case "spawn": return { kind: "spawn", text: call.title ?? "派工" };
+    case "todo": return { kind: "plan", text: currentTodo(call.todos ?? [], locale) };
+    case "edit": case "write": return editAction(call, at, w, locale);
+    case "read": case "search": return { kind: "read", text: t(locale, "看 {target}", { target: fileName(call) }) };
+    case "shell": return shellAction((call.command ?? "").trim(), call.tool, result, locale);
+    case "spawn": return { kind: "spawn", text: call.title ?? t(locale, "派工") };
     case "ask": return { kind: "other", text: call.title ?? call.tool };
     case "other": return { kind: "other", text: call.tool };
   }
 }
 
 /** 第一个 in_progress 项，没有就第一个 pending 项，都没有（或调用没带列表）写"更新待办" */
-function currentTodo(todos: readonly TodoItem[]): string {
+function currentTodo(todos: readonly TodoItem[], locale: Locale): string {
   const item = todos.find((t) => t.status === "in_progress") ?? todos.find((t) => t.status === "pending");
-  return item?.text ?? "更新待办";
+  return item?.text ?? t(locale, "更新待办");
 }
 
 /** 判定顺序（P8）：改 tasks.md 算计划 → 删除行过多算拆除 → 返工只替换改代码 */
-function editAction(call: ToolCall, at: number, w: Walk): Classified {
+function editAction(call: ToolCall, at: number, w: Walk, locale: Locale): Classified {
   const name = fileName(call);
   const { added, removed } = call;
   const hasLines = added !== undefined && removed !== undefined;
-  if (name === "tasks.md") return { kind: "plan", text: "改 tasks.md" };
-  if (hasLines && removed > added * 2) return { kind: "demolish", text: `删 ${name}` };
-  if (inReworkWindow(at, w.lastTestFailAt)) return { kind: "rework", text: `修 ${name}` };
-  return { kind: "build", text: hasLines ? `改 ${name} +${added} −${removed}` : `改 ${name}` };
+  if (name === "tasks.md") return { kind: "plan", text: t(locale, "改 tasks.md") };
+  if (hasLines && removed > added * 2) return { kind: "demolish", text: t(locale, "删 {target}", { target: name }) };
+  if (inReworkWindow(at, w.lastTestFailAt)) return { kind: "rework", text: t(locale, "修 {target}", { target: name }) };
+  return { kind: "build", text: hasLines ? t(locale, "改 {target} +{added} −{removed}", { target: name, added, removed }) : t(locale, "改 {target}", { target: name }) };
 }
 
 /** 调用时间在最近一次测试失败的结果之后（含同一时刻），且不超过返工时间窗 */
@@ -181,15 +182,15 @@ const fileName = (call: ToolCall): string => (call.paths.length > 0 ? baseName(c
  * 归类顺序（P9）：测试 → 提交 → 拆除 → 读 → 其他。前三条看去掉字面量的整条命令（E19），读看主命令；
  * 气泡文字和提交标题都取自原命令
  */
-function shellAction(command: string, tool: string, result: ToolResultEvent | undefined): Classified {
+function shellAction(command: string, tool: string, result: ToolResultEvent | undefined, locale: Locale): Classified {
   const word = testWord(command);
   if (word !== null) return { kind: "test", text: testText(word, result) };
   const bare = blankLiterals(command);
-  if (COMMIT_RE.test(bare)) return { kind: "commit", text: commitTitle(command) ?? "提交" };
+  if (COMMIT_RE.test(bare)) return { kind: "commit", text: commitTitle(command) ?? t(locale, "提交") };
   const verb = DEMOLISH_RE.exec(bare);
-  if (verb !== null) return { kind: "demolish", text: `删 ${baseName(demolishTarget(command, bare, verb))}` };
+  if (verb !== null) return { kind: "demolish", text: t(locale, "删 {target}", { target: baseName(demolishTarget(command, bare, verb)) }) };
   const main = mainCommand(command);
-  if (READ_CMD_RE.test(main)) return { kind: "read", text: `看 ${main}` };
+  if (READ_CMD_RE.test(main)) return { kind: "read", text: t(locale, "看 {target}", { target: main }) };
   return { kind: "other", text: main || tool };
 }
 

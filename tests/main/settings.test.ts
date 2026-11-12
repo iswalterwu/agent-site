@@ -176,7 +176,7 @@ describe("WINDOW-27：从设置面板写回", () => {
     writeSettings(dir, settings);
     const text = readFileSync(path.join(dir, "settings.json"), "utf8");
     expect(text.endsWith("}\n")).toBe(true);
-    expect(Object.keys(JSON.parse(text))).toEqual(["repos", "thresholds", "features", "style", "pins", "autostart", "theme"]);
+    expect(Object.keys(JSON.parse(text))).toEqual(["repos", "thresholds", "features", "style", "pins", "autostart", "theme", "language"]);
     expect(loadSettings(dir)).toEqual({ settings, diagnostics: [] });
   });
 });

@@ -2,6 +2,7 @@ import { existsSync, watch, type FSWatcher } from "node:fs";
 import { lstat, readFile } from "node:fs/promises";
 import path from "node:path";
 import { isUnder, normalizePath } from "../bridge/scope";
+import { t, type Locale } from "../core/i18n";
 import { buildSnapshot } from "../core/snapshot";
 import { baseName } from "../core/text";
 import { applyEvents, newSession } from "../core/session";
@@ -35,7 +36,7 @@ interface Tracker {
   siteKind?: "git" | "dir";
   /** 配置里额外固定过的工地用它给的名字，其余用目录名 */
   siteName?: string;
-  /** 进不了工地时的说明（比如会话没有工作目录），写进快照诊断 */
+  /** 没有工作目录的会话短键；组装快照时再按当前语言拼诊断 */
   note?: string;
 }
 /** 工地里最近一次事件的时间；没有会话的工地按 0 算 */
@@ -127,7 +128,9 @@ export class SiteEngine {
     this.schedulePush();
   }
 
-  private tail(found: Found): JsonlTail | ZstdTail { return found.harness === "dsh" ? new ZstdTail(found.file) : new JsonlTail(found.file); }
+  private tail(found: Found): JsonlTail | ZstdTail {
+    return found.harness === "dsh" ? new ZstdTail(found.file, () => this.opts.settings.locale ?? "zh-CN") : new JsonlTail(found.file);
+  }
 
   private async read(found: Found): Promise<void> {
     let t = this.trackers.get(found.file);
@@ -156,7 +159,7 @@ export class SiteEngine {
         } else {
           t.state = "ignored";
           // 只写短键：诊断会进快照，长 ID 没必要全带出去
-          if (meta.cwd.trim() === "") t.note = `会话 ${meta.harness}:${meta.nativeId.slice(0, 8)} 没有工作目录，没上工地`;
+          if (meta.cwd.trim() === "") t.note = `${meta.harness}:${meta.nativeId.slice(0, 8)}`;
         }
       }
     }
@@ -301,15 +304,18 @@ export class SiteEngine {
       site.mini = site.features.length === 0;
     }
     const active = this.pickActive(kept);
-    const notes = dropped.length === 0 ? [] : [`工地超过 ${MAX_SITES} 个，按最近活动只画前 ${MAX_SITES} 个：${dropped.join("、")} 没画`];
-    const missingCwd = [...this.trackers.values()].flatMap(tracker => tracker.note === undefined ? [] : [tracker.note]);
+    const locale = this.opts.settings.locale ?? "zh-CN";
+    const notes = dropped.length === 0 ? [] : [t(locale, "工地超过 {limit} 个，按最近活动只画前 {limit} 个：{sites} 没画",
+      { limit: MAX_SITES, sites: dropped.join(t(locale, "core.siteSeparator")) })];
+    const missingCwd = [...this.trackers.values()].flatMap(tracker => tracker.note === undefined ? []
+      : [t(locale, "会话 {session} 没有工作目录，没上工地", { session: tracker.note })]);
     const todoNotes = kept.flatMap(site => {
       if (site.features.length > 0) return [];
       const withTodos = site.sessions.filter(session => session.meta.level === 1 && (session.todos?.length ?? 0) > 0);
       const notes: string[] = [];
-      if (withTodos.length > 6) notes.push(`${site.name} 有 ${withTodos.length} 个带待办的会话，只画前 6 段`);
+      if (withTodos.length > 6) notes.push(t(locale, "{site} 有 {count} 个带待办的会话，只画前 6 段", { site: site.name, count: withTodos.length }));
       const over = withTodos.filter(session => (session.todos?.length ?? 0) > 12).length;
-      if (over > 0) notes.push(`${site.name} 有 ${over} 个会话的待办超过 12 条，只画前 12 层`);
+      if (over > 0) notes.push(t(locale, "{site} 有 {count} 个会话的待办超过 12 条，只画前 12 层", { site: site.name, count: over }));
       return notes;
     });
     return buildSnapshot({ now: this.now(), sites: kept, active, config: this.opts.settings,
@@ -346,6 +352,14 @@ export class SiteEngine {
     const cached = this.branches.get(cwd), at = this.now();
     if (cached && at - cached.at < 60_000) { cached.usedAt = at; return cached.branch; }
     const branch = await this.gitBranch(cwd); this.branches.set(cwd, { at, usedAt: at, branch }); return branch;
+  }
+
+  /** 换语言沿用会话缓存，不重开引擎；更新仍走原来的队列和快照推送。 */
+  setLocale(locale: Locale, startupDiagnostics = this.opts.diagnostics): Promise<void> {
+    const changed = locale !== (this.opts.settings.locale ?? "zh-CN") || startupDiagnostics !== this.opts.diagnostics;
+    this.opts.settings = { ...this.opts.settings, locale };
+    this.opts.diagnostics = startupDiagnostics;
+    return changed ? this.refresh() : Promise.resolve();
   }
 
   snapshot(): SiteSnapshot { return this.latest; }

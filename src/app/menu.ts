@@ -3,7 +3,7 @@ import type { SiteSnapshot } from "../core/types";
 import type { MenuAction } from "./api";
 import type { AppModes } from "./modes";
 import type { ThemeName } from "./theme";
-import type { AppScale } from "./window";
+import { ui } from "./i18n";
 
 export type MenuGroupId = "display" | "position" | "sites" | "theme" | "behavior";
 
@@ -36,7 +36,7 @@ export function siteMenuSignature(menu: SiteMenu | null): string {
 
 /** 工地项的文字：有人在等你时把数字带上，没人等就用原名 */
 export const siteLabel = (site: { name: string; waiting: number }): string =>
-  site.waiting === 0 ? site.name : `${site.name} · 等你 ${site.waiting}`;
+  site.waiting === 0 ? site.name : ui("{name} · 等你 {count}", { name: site.name, count: site.waiting });
 
 export interface MenuGroup { id: MenuGroupId; label: string; entries: MenuEntry[] }
 
@@ -49,40 +49,40 @@ export interface AppMenu {
 /** 齿轮菜单和托盘菜单共用这一份：显示 / 位置 / 缩放 / 行为四组，加两个单列项；工地多于一个时中间多一组 */
 export function appMenu(modes: AppModes, visible: boolean, siteMenu: SiteMenu | null = null, theme: ThemeName = "night"): AppMenu {
   const sites: MenuGroup[] = siteMenu === null || siteMenu.sites.length < 2 ? [] : [{
-    id: "sites", label: "工地", entries: [
-      { action: "follow-site", label: "自动跟随", check: siteMenu.pinned === null },
+    id: "sites", label: ui("menu.sites"), entries: [
+      { action: "follow-site", label: ui("自动跟随"), check: siteMenu.pinned === null },
       ...siteMenu.sites.map(site => ({ action: "pin-site" as const, label: siteLabel(site), site: site.key,
         check: siteMenu.pinned === site.key })),
     ],
   }];
   return {
     groups: [
-      { id: "display", label: "显示", entries: [
-        { action: "toggle", label: visible ? "隐藏" : "显示" },
+      { id: "display", label: ui("menu.display"), entries: [
+        { action: "toggle", label: ui(visible ? "隐藏" : "显示") },
       ] },
-      { id: "position", label: "位置", entries: [
-        { action: "attach-right", label: "附着到右侧屏幕" },
-        { action: "primary", label: "贴到主屏" },
-        { action: "cursor", label: "贴到鼠标所在屏幕" },
+      { id: "position", label: ui("位置"), entries: [
+        { action: "attach-right", label: ui("附着到右侧屏幕") },
+        { action: "primary", label: ui("贴到主屏") },
+        { action: "cursor", label: ui("贴到鼠标所在屏幕") },
       ] },
       ...sites,
-      { id: "theme", label: "主题", entries: [
-        { action: "theme-night", label: "夜色", check: theme === "night", radio: true },
-        { action: "theme-day", label: "白昼", check: theme === "day", radio: true },
+      { id: "theme", label: ui("主题"), entries: [
+        { action: "theme-night", label: ui("夜色"), check: theme === "night", radio: true },
+        { action: "theme-day", label: ui("白昼"), check: theme === "day", radio: true },
       ] },
-      { id: "behavior", label: "行为", entries: [
-        { action: "auto-hide", label: "贴边隐藏", check: modes.autoHide },
-        { action: "translucent", label: "半透明", check: modes.translucent },
-        { action: "waiting-dot", label: "等待橙点", check: modes.waitingDot },
-        { action: "demo", label: "演示模式", check: modes.demo },
-        { action: "dnd", label: "勿扰", check: modes.dnd },
-        { action: "pause-animation", label: "暂停动画", check: modes.pauseAnimation },
+      { id: "behavior", label: ui("行为"), entries: [
+        { action: "auto-hide", label: ui("贴边隐藏"), check: modes.autoHide },
+        { action: "translucent", label: ui("半透明"), check: modes.translucent },
+        { action: "waiting-dot", label: ui("等待橙点"), check: modes.waitingDot },
+        { action: "demo", label: ui("演示模式"), check: modes.demo },
+        { action: "dnd", label: ui("勿扰"), check: modes.dnd },
+        { action: "pause-animation", label: ui("暂停动画"), check: modes.pauseAnimation },
       ] },
     ],
     singles: [
-      { action: "settings", label: "设置…" },
-      { action: "diagnostics", label: "诊断" },
-      { action: "quit", label: "退出" },
+      { action: "settings", label: ui("设置…") },
+      { action: "diagnostics", label: ui("诊断") },
+      { action: "quit", label: ui("退出") },
     ],
   };
 }

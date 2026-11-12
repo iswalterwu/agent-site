@@ -1,6 +1,7 @@
 import { ribbonColor } from "../core/building";
 import { redact } from "../core/redact";
-import type { ActionView, FeatureStatus, Ribbon, Risk, SiteSnapshot, SiteView, TodoItem, TraceEntry, WaitItem, Worker, WorkerControl, WorkerStatus } from "../core/types";
+import type { ActionView, Ribbon, SiteSnapshot, SiteView, TodoItem, TraceEntry, WaitItem, Worker, WorkerControl } from "../core/types";
+import { ui } from "./i18n";
 import { RIBBON_TONE, workerTone } from "./footer";
 import type { Tone } from "./theme";
 
@@ -12,7 +13,7 @@ export interface BandCardView {
   readable: boolean;
   tarp: string | null;
   statusLabel: string;
-  risk: Risk | null;
+  risk: string | null;
   ac: number | null;
   open: number | null;
   slices: { total: number; done: number } | null;
@@ -54,9 +55,9 @@ export interface WorkerCardView {
   testFailure: { at: number; text: string } | null;
 }
 
-const ROLE: Record<Worker["role"], string> = { foreman: "工头", worker: "工人", inspector: "监理" };
-const STATUS: Record<WorkerStatus, string> = { waiting: "等你", stalled: "停工", idle: "空闲", working: "在干" };
-const FEATURE_STATUS: Record<FeatureStatus, string> = { "in-progress": "在建", done: "已交付" };
+const ROLE = { foreman: "工头", worker: "工人", inspector: "监理" } as const;
+const STATUS = { waiting: "等你", stalled: "停工", idle: "空闲", working: "在干" } as const;
+const FEATURE_STATUS = { "in-progress": "在建", done: "已交付" } as const;
 const HARNESS: Record<Worker["harness"], string> = { pi: "pi", claude: "Claude Code", dsh: "DSH" };
 
 /** 楼段或办公室 feature 还在快照里；卡片存续检查两处都看 */
@@ -76,9 +77,9 @@ export function bandView(site: SiteView, feature: string): BandCardView | null {
   const ribbon = band?.ribbon ?? ribbonColor(card.status, workers);
   return {
     feature: redact(feature), title: redact(card.title ?? feature), ribbon, tone: RIBBON_TONE[ribbon],
-    readable: card.title !== null, tarp: band?.tarp === null || band?.tarp === undefined ? null : redact(band.tarp),
-    statusLabel: card.status === null ? "未知" : FEATURE_STATUS[card.status],
-    risk: card.risk, ac: card.ac, open: card.open, slices: card.slices,
+    readable: card.title !== null, tarp: band?.tarp === null || band?.tarp === undefined ? null : ui(band.tarp),
+    statusLabel: card.status === null ? ui("未知") : ui(FEATURE_STATUS[card.status]),
+    risk: card.risk === null ? null : ui(card.risk), ac: card.ac, open: card.open, slices: card.slices,
     current: card.current === null ? null : { ...card.current, id: redact(card.current.id), title: redact(card.current.title) },
     workers, specsDir: redact(card.specsDir), source: card.source, mini: band?.mini ?? false,
   };
@@ -87,16 +88,17 @@ export function bandView(site: SiteView, feature: string): BandCardView | null {
 /** 悬停摘要里的四行：状态、人员、当前切片 / 步骤、AC / 待定 / 风险 */
 export function bandSummary(view: BandCardView): { status: string; people: string; current: string; acceptance: string; risk: string } {
   const todo = view.source === "todos";
-  const status = todo ? `来自会话待办 · ${view.statusLabel}`
-    : view.mini ? "没有意图卡" : view.readable ? view.statusLabel : view.tarp ?? "图纸读不出";
-  const people = view.workers.length === 0 ? "没人" : `${view.workers.length} 人 · ${
-    [...new Set(view.workers.map(worker => ROLE[worker.role]))].join(" / ")}`;
-  const current = todo ? view.current === null ? "没有进行中的待办" : view.current.title
-    : view.current === null ? "没有当前切片"
+  const status = todo ? ui("来自会话待办 · {status}", { status: view.statusLabel })
+    : view.mini ? ui("没有意图卡") : view.readable ? view.statusLabel : view.tarp ?? ui("图纸读不出");
+  const people = view.workers.length === 0 ? ui("没人") : ui("{count} 人 · {roles}", {
+    count: view.workers.length, roles: [...new Set(view.workers.map(worker => ui(ROLE[worker.role])))].join(" / "),
+  });
+  const current = todo ? view.current === null ? ui("没有进行中的待办") : view.current.title
+    : view.current === null ? ui("没有当前切片")
       : `${view.current.id} ${view.current.title} ${view.current.stepsDone}/${view.current.stepsTotal}`;
-  const acceptance = todo ? view.slices === null ? "—" : `待办 ${view.slices.done}/${view.slices.total}`
-    : view.readable ? `AC ${view.ac ?? "—"} · 待定 ${view.open ?? "—"}` : "—";
-  const risk = todo ? "" : view.readable ? `风险 ${view.risk ?? "—"}` : "—";
+  const acceptance = todo ? view.slices === null ? "—" : ui("待办 {done}/{total}", view.slices)
+    : view.readable ? ui("AC {ac} · 待定 {open}", { ac: view.ac ?? "—", open: view.open ?? "—" }) : "—";
+  const risk = todo ? "" : view.readable ? ui("风险 {risk}", { risk: view.risk ?? "—" }) : "—";
   return { status, people, current, acceptance, risk };
 }
 
@@ -108,9 +110,9 @@ export function workerView(site: SiteView, key: string, demo = false): WorkerCar
   return {
     key: worker.key,
     site: redact(site.name),
-    title: redact(`${ROLE[worker.role]} · ${location}`),
+    title: redact(`${ui(ROLE[worker.role])} · ${location}`),
     tone: workerTone(worker),
-    statusLabel: STATUS[worker.status],
+    statusLabel: ui(STATUS[worker.status]),
     statusSince: worker.statusSince,
     statusDetail: demo || worker.statusDetail === null ? null : displayText(worker.statusDetail),
     trace: demo ? [] : worker.trace.map(entry => ({ ...entry, text: displayText(entry.text) })),
@@ -185,7 +187,7 @@ export function diagnosticsView(snapshot: SiteSnapshot, site: SiteView | null): 
 export function diagnosticsProblems(view: DiagnosticsView): string[] {
   return [
     ...view.sources.filter(source => source.lastError !== null && source.lastError !== "")
-      .map(source => `${source.harness}：${source.lastError}`),
+      .map(source => ui("{harness}：{error}", { harness: source.harness, error: source.lastError! })),
     ...view.notes,
   ];
 }
@@ -216,16 +218,16 @@ export function shortId(value: string): string {
 
 export function formatSince(now: number, since: number): string {
   const minutes = Math.floor(Math.max(0, now - since) / 60_000);
-  if (minutes < 1) return "刚刚";
-  if (minutes < 60) return `${minutes} 分钟前`;
+  if (minutes < 1) return ui("刚刚");
+  if (minutes < 60) return ui("{minutes} 分钟前", { minutes });
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} 小时前`;
-  return `${Math.floor(hours / 24)} 天前`;
+  if (hours < 24) return ui("{hours} 小时前", { hours });
+  return ui("{days} 天前", { days: Math.floor(hours / 24) });
 }
 
 function locationLabel(worker: Worker): string {
   const location = worker.location;
   if (location.kind === "band") return `${location.feature} ${location.floor}`;
-  if (location.kind === "office") return location.feature === undefined ? "办公室" : `办公室 ${location.feature}`;
-  return "工地门口";
+  if (location.kind === "office") return location.feature === undefined ? ui("办公室") : ui("办公室 {feature}", { feature: location.feature });
+  return ui("工地门口");
 }

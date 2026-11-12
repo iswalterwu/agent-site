@@ -4,7 +4,9 @@ import path from "node:path";
 import { appDataDir, loadSettings, writeSettings, type Settings } from "../main/settings";
 import { LOGICAL_WIDTH } from "./constants";
 import type { AppAsk, AppBootstrap, AppHit, AppRect, AppView, AskResult, ControlAction, ControlResult, MenuAction, SaveSettingsResult } from "./api";
-import { draftOf, fromDraft, mergeSettings, parseDraft, type SettingsDraft } from "./settings-form";
+import { draftOf, fromDraft, mergeSettings, parseDraft, engineSettingsChanged, type SettingsDraft } from "./settings-form";
+import { resolveLocale, localizedError, type MessageKey } from "../core/i18n";
+import { setUiLocale, ui, uiLocale } from "./i18n";
 import { chooseDisplay, chooseRightDisplay, displayView } from "./display";
 import { SiteEngine } from "../main/engine";
 import { visibleSnapshot } from "./visibility";
@@ -40,7 +42,7 @@ let waiting = false;
 let baseImage: NativeImage | null = null;
 let waitingImage: NativeImage | null = null;
 let targetId: number | null = null;
-let view: AppView = { scale: 2, workArea: { x: 0, y: 0, width: 0, height: 1 }, windowHeight: 1, theme: "night" };
+let view: AppView = { scale: 2, workArea: { x: 0, y: 0, width: 0, height: 1 }, windowHeight: 1, theme: "night", locale: "zh-CN" };
 /** 配色：菜单里切，默认来自 settings.json 的 theme */
 let theme: ThemeName = "night";
 let activeEngine: SiteEngine | null = null;
@@ -85,13 +87,14 @@ if (!gotLock) {
 }
 
 async function startApp(): Promise<void> {
-  const { settings, diagnostics } = loadSettings(appDataDir(process.env));
+  const { settings, diagnostics } = loadSettings(appDataDir(process.env), app.getLocale());
   currentSettings = settings;
+  setUiLocale(resolveLocale(settings.language, app.getLocale()));
   theme = settings.theme;
   for (const message of diagnostics) console.warn(`[agent-site] ${message}`);
   const home = os.homedir();
   const engine = new SiteEngine({
-    settings, diagnostics,
+    settings: { ...settings, locale: uiLocale() }, diagnostics,
     roots: {
       pi: path.join(home, ".pi", "agent", "sessions"),
       claude: path.join(home, ".claude", "projects"),
@@ -101,6 +104,7 @@ async function startApp(): Promise<void> {
   const bridge = new BridgeService({
     file: path.join(appDataDir(process.env), "bridge.json"),
     repos: [],
+    locale: uiLocale,
     onChange: () => {
       if (latestSource !== null) publishSnapshot(latestSource);
       publishAsks();
@@ -129,7 +133,7 @@ async function startApp(): Promise<void> {
     get: (item) => app.getLoginItemSettings(item),
   });
   if (loginStatus !== "ok") {
-    console.warn(`[agent-site] 开机自启${settings.autostart ? "注册" : "撤销"}没有生效（${loginStatus}）：可能是系统策略或权限限制，其它功能不受影响`);
+    console.warn(`[agent-site] ${ui("开机自启{action}没有生效（{status}）：可能是系统策略或权限限制，其它功能不受影响", { action: ui(settings.autostart ? "注册" : "撤销"), status: loginStatus })}`);
   }
   visibleTimer = setInterval(() => {
     if (latestSource !== null) publishSnapshot(latestSource);
@@ -165,7 +169,7 @@ function createWindow(settings: Settings, engine: SiteEngine): void {
   const initial = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
   targetId = initial.id;
   followPrimary = false;
-  view = displayView(initial, scale, theme).view;
+  view = displayView(initial, scale, theme, uiLocale()).view;
 
   win = new BrowserWindow({
     ...windowBounds(view.workArea, view.scale),
@@ -220,13 +224,13 @@ function createWindow(settings: Settings, engine: SiteEngine): void {
   ipcMain.handle("app:control", async (event, value: unknown): Promise<ControlResult> => {
     if (event.sender !== win?.webContents) return { ok: false, error: "unexpected sender" };
     const request = parseControl(value);
-    if (request === null) return { ok: false, error: "无效的控制" };
+    if (request === null) return { ok: false, ...localizedError(uiLocale(), "无效的控制") };
     return runControl(request.key, { type: request.action });
   });
   ipcMain.handle("app:suggest", async (event, value: unknown): Promise<ControlResult> => {
     if (event.sender !== win?.webContents) return { ok: false, error: "unexpected sender" };
     const request = parseSuggest(value);
-    if (request === null) return { ok: false, error: "建议不能为空，也不能超过 4000 字" };
+    if (request === null) return { ok: false, ...localizedError(uiLocale(), "建议不能为空，也不能超过 4000 字") };
     return runControl(request.key, { type: "suggest", text: request.text, mode: request.mode });
   });
   ipcMain.handle("app:open-settings", (event) => {
@@ -234,14 +238,14 @@ function createWindow(settings: Settings, engine: SiteEngine): void {
     win?.webContents.send("app:settings", settingsForPanel());
   });
   ipcMain.handle("app:save-settings", (event, value: unknown): SaveSettingsResult => {
-    if (event.sender !== win?.webContents) return { ok: false, errors: ["意外的调用方"] };
+    if (event.sender !== win?.webContents) return { ok: false, errors: [ui("意外的调用方")] };
     return saveSettings(value);
   });
   ipcMain.handle("app:answer", (event, value: unknown): AskResult => {
     if (event.sender !== win?.webContents) return { accepted: false, reason: "unexpected sender" };
     const request = parseAnswer(value);
-    if (request === null) return { accepted: false, reason: "无效的回答" };
-    if (bridgeService === null) return { accepted: false, reason: "桥接服务未启动" };
+    if (request === null) return answerFailure("无效的回答");
+    if (bridgeService === null) return answerFailure("桥接服务未启动");
     return bridgeService.answer(request.askId, request.value);
   });
   ipcMain.on("app:rects", (event, value: unknown) => {
@@ -302,9 +306,9 @@ function registerShortcuts(): void {
   const bind = (accelerator: string, run: () => void): void => {
     try {
       if (globalShortcut.register(accelerator, () => { void run(); })) return;
-      console.warn(`[agent-site] 快捷键 ${accelerator} 注册失败：可能被别的程序占用`);
+      console.warn(`[agent-site] ${ui("快捷键 {key} 注册失败：可能被别的程序占用", { key: accelerator })}`);
     } catch (error) {
-      console.warn(`[agent-site] 快捷键 ${accelerator} 注册失败:`, error);
+      console.warn(`[agent-site] ${ui("快捷键 {key} 注册失败:", { key: accelerator })}`, error);
     }
   };
   bind(SHORTCUTS.toggleWindow, () => { toggleWindow(); });
@@ -352,7 +356,7 @@ function applyDisplay(): void {
   if (!followPrimary && !all.some(display => display.id === targetId)) followPrimary = true;
   const target = chooseDisplay(all, primary.id, followPrimary, targetId);
   targetId = target.id;
-  const next = displayView(target, scale, theme);
+  const next = displayView(target, scale, theme, uiLocale());
   view = next.view;
   if (win !== null) {
     setBoundsQuiet(next.bounds);
@@ -514,7 +518,7 @@ function updateTrayIcon(): void {
   if (tray === null || baseImage === null) return;
   const dot = showWaitingDot(modes, waiting) && waitingImage !== null;
   tray.setImage(dot ? waitingImage! : baseImage);
-  tray.setToolTip(dot ? "agent-site · 有人等你" : "agent-site");
+  tray.setToolTip(dot ? ui("agent-site · 有人等你") : "agent-site");
 }
 
 function setMode(action: ModeAction): void {
@@ -548,23 +552,32 @@ function settingsForPanel(): { draft: SettingsDraft } | null {
  */
 function saveSettings(value: unknown): SaveSettingsResult {
   const draft = parseDraft(value);
-  if (draft === null) return { ok: false, errors: ["设置的内容不完整"] };
-  if (currentSettings === null) return { ok: false, errors: ["设置还没读出来，等一下再存"] };
-  const parsed = fromDraft(draft);
+  if (draft === null) return { ok: false, errors: [ui("设置的内容不完整")] };
+  if (currentSettings === null) return { ok: false, errors: [ui("设置还没读出来，等一下再存")] };
+  const parsed = fromDraft(draft, uiLocale());
   if ("errors" in parsed) return { ok: false, errors: parsed.errors };
   const next = mergeSettings(currentSettings, parsed.settings);
   try {
     writeSettings(appDataDir(process.env), next);
   } catch (error) {
-    return { ok: false, errors: [`写不进 settings.json：${(error as Error).message}`] };
+    return { ok: false, errors: [ui("写不进 settings.json：{error}", { error: (error as Error).message })] };
   }
+  const previous = currentSettings;
   currentSettings = next;
-  applySavedSettings(next);
+  applySavedSettings(next, previous);
   return { ok: true };
 }
 
 /** 存完之后当场生效的那部分；引擎重开拿到新的阈值 */
-function applySavedSettings(next: Settings): void {
+function applySavedSettings(next: Settings, previous: Settings): void {
+  const locale = resolveLocale(next.language, app.getLocale());
+  if (locale !== uiLocale()) {
+    setUiLocale(locale);
+    view = { ...view, locale };
+    win?.webContents.send("app:view", view);
+    updateTrayIcon();
+    rebuildTray();
+  }
   if (theme !== next.theme) setThemeMode(next.theme);
   const item = loginItem(next.autostart, {
     packaged: app.isPackaged, execPath: process.execPath, mainFile: path.join(__dirname, "main.cjs"),
@@ -574,8 +587,9 @@ function applySavedSettings(next: Settings): void {
     set: (value) => { app.setLoginItemSettings(value); },
     get: (value) => app.getLoginItemSettings(value),
   });
-  if (loginStatus !== "ok") console.warn(`[agent-site] 开机自启设置没有生效（${loginStatus}）`);
-  void restartEngine(next);
+  if (loginStatus !== "ok") console.warn(`[agent-site] ${ui("开机自启设置没有生效（{status}）", { status: loginStatus })}`);
+  if (engineSettingsChanged(previous, next)) void restartEngine(next);
+  else void activeEngine?.setLocale(locale, []).catch((error: unknown) => console.error("[agent-site] language refresh failed:", error));
 }
 
 /** 引擎按新设置重开：旧的不再读日志，新的把现有会话重扫一遍 */
@@ -585,7 +599,7 @@ async function restartEngine(next: Settings): Promise<void> {
   activeEngine?.stop();
   activeEngine = null;
   const engine = new SiteEngine({
-    settings: next, diagnostics: [],
+    settings: { ...next, locale: uiLocale() }, diagnostics: [],
     roots: {
       pi: path.join(os.homedir(), ".pi", "agent", "sessions"),
       claude: path.join(os.homedir(), ".claude", "projects"),
@@ -656,6 +670,11 @@ function parseControl(value: unknown): { key: string; action: ControlAction } | 
     ? { key, action } : null;
 }
 
+function answerFailure(key: MessageKey): AskResult {
+  const { error, messageKey } = localizedError(uiLocale(), key);
+  return { accepted: false, reason: error, messageKey };
+}
+
 function parseAnswer(value: unknown): { askId: string; value: string | null } | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const { askId, value: answer } = value as Record<string, unknown>;
@@ -687,13 +706,13 @@ function notifyAsks(visible: SiteSnapshot): void {
   const suppressed = win === null || win.isDestroyed() || win.isFocused();
   const { notices, seen } = planNotices({
     snapshot: visible, asks, seen: seenAsks, focused: suppressed,
-    demo: modes.demo, dnd: modes.dnd, now: Date.now(),
+    demo: modes.demo, dnd: modes.dnd, now: Date.now(), locale: uiLocale(),
   });
   seenAsks = seen;
   // 等你 / 停住 / 断线时还暂停着：只在进入状态那一轮弹一次
   const alerts = planAlerts({
     snapshot: visible, asks, sessions: bridgeService?.sessions() ?? [], paused: pausedSessions, active: activeAlerts,
-    focused: suppressed, demo: modes.demo, dnd: modes.dnd,
+    focused: suppressed, demo: modes.demo, dnd: modes.dnd, locale: uiLocale(),
   });
   activeAlerts = alerts.active;
   pausedSessions = alerts.paused;
@@ -711,7 +730,7 @@ function notifyAsks(visible: SiteSnapshot): void {
 
 async function runControl(key: string, command: BridgeCommand): Promise<ControlResult> {
   const result = bridgeService === null
-    ? { ok: false, error: "桥接服务未启动" }
+    ? { ok: false, ...localizedError(uiLocale(), "桥接服务未启动") }
     : await bridgeService.command(key, command);
   try {
     appendCommand(path.join(appDataDir(process.env), "commands.jsonl"), {
